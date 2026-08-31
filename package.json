@@ -16,6 +16,14 @@
     "typescript"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RiskLight/pages-core.git"
+  },
+  "homepage": "https://github.com/RiskLight/pages-core",
+  "bugs": {
+    "url": "https://github.com/RiskLight/pages-core/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -43,20 +51,26 @@
   "files": [
     "dist"
   ],
+  "sideEffects": false,
   "engines": {
     "node": ">=22.12"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "prepublishOnly": "npm run build",
     "prepare": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "tsc"
+    "build": "tsc",
+    "lint": "oxlint src/"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "mongodb": "^7.6.0",
     "mysql2": "^3.24.2",
+    "oxlint": "^1.80.0",
     "pg": "^8.23.0",
     "typescript": "^5.8.0",
     "vitest": "^4.1.0"
