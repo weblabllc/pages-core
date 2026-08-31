@@ -106,15 +106,15 @@ export async function loadOptionalModule(name: string, purpose: string): Promise
 export async function createPageStore(options: PageStoreOptions): Promise<PageStore> {
     switch (options.driver) {
         case 'postgres': {
-            const { PgPageStore } = require('./stores/pg') as typeof import('./stores/pg.js');
+            const { PgPageStore } = await import('./stores/pg.js');
             return PgPageStore.create(options);
         }
         case 'mysql': {
-            const { MysqlPageStore } = require('./stores/mysql') as typeof import('./stores/mysql.js');
+            const { MysqlPageStore } = await import('./stores/mysql.js');
             return MysqlPageStore.create(options);
         }
         case 'mongodb': {
-            const { MongoPageStore } = require('./stores/mongo') as typeof import('./stores/mongo.js');
+            const { MongoPageStore } = await import('./stores/mongo.js');
             return MongoPageStore.create(options);
         }
         default:
