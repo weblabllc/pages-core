@@ -1,0 +1,78 @@
+{
+  "name": "@risklight/pages-core",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Transport- and ORM-agnostic core for Puck-backed content: configurable kinds (page/article/blog), publish lifecycle, MLT, authors, reading time, pagination, optional Postgres/MySQL/MongoDB stores",
+  "keywords": [
+    "cms",
+    "puck",
+    "pages",
+    "blog",
+    "articles",
+    "multilang",
+    "postgres",
+    "mysql",
+    "mongodb",
+    "typescript"
+  ],
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./pg": {
+      "types": "./dist/stores/pg.d.ts",
+      "import": "./dist/stores/pg.js",
+      "default": "./dist/stores/pg.js"
+    },
+    "./mysql": {
+      "types": "./dist/stores/mysql.d.ts",
+      "import": "./dist/stores/mysql.js",
+      "default": "./dist/stores/mysql.js"
+    },
+    "./mongo": {
+      "types": "./dist/stores/mongo.d.ts",
+      "import": "./dist/stores/mongo.js",
+      "default": "./dist/stores/mongo.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "prepublishOnly": "npm run build",
+    "prepare": "npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "tsc"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.8.0",
+    "vitest": "^4.1.0"
+  },
+  "peerDependencies": {
+    "pg": ">=8",
+    "mysql2": ">=3",
+    "mongodb": ">=5"
+  },
+  "peerDependenciesMeta": {
+    "pg": {
+      "optional": true
+    },
+    "mysql2": {
+      "optional": true
+    },
+    "mongodb": {
+      "optional": true
+    }
+  }
+}
