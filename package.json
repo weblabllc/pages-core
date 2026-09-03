@@ -18,11 +18,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/RiskLight/pages-core.git"
+    "url": "git+https://github.com/RiskLightS/pages-core.git"
   },
-  "homepage": "https://github.com/RiskLight/pages-core",
+  "homepage": "https://github.com/RiskLightS/pages-core",
   "bugs": {
-    "url": "https://github.com/RiskLight/pages-core/issues"
+    "url": "https://github.com/RiskLightS/pages-core/issues"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
