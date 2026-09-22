@@ -1,9 +1,12 @@
+import { StoredFolder } from '../addressing.js';
 import { StoredAuthor, StoredCategory, StoredPage } from '../store.js';
 
 export interface TableNames {
     pages: string;
     authors: string;
     categories: string;
+    folders: string;
+    slugHistory: string;
 }
 
 export function tableNames(prefix: string): TableNames {
@@ -12,11 +15,17 @@ export function tableNames(prefix: string): TableNames {
         pages: `${p}pages`,
         authors: `${p}authors`,
         categories: `${p}categories`,
+        folders: `${p}page_folders`,
+        slugHistory: `${p}page_slug_history`,
     };
 }
 
 export function pageToRow(r: StoredPage): Record<string, unknown> {
+    const placement: Record<string, unknown> = {};
+    if (r.folderId !== undefined) placement.folder_id = r.folderId;
+    if (r.segment !== undefined) placement.segment = r.segment;
     return {
+        ...placement,
         slug: r.slug,
         tenant: r.tenant ?? '',
         type: r.type,
@@ -67,6 +76,8 @@ export function rowToPage(row: Record<string, unknown>): StoredPage {
         coverImage: (row.cover_image as string | null) ?? null,
         readingTime: row.reading_time === null || row.reading_time === undefined ? null : Number(row.reading_time),
         publishedAt: asDate(row.published_at),
+        ...('folder_id' in row ? { folderId: (row.folder_id as string | null) ?? null } : {}),
+        ...('segment' in row ? { segment: (row.segment as string | null) ?? null } : {}),
         createdAt: asDate(row.created_at) ?? undefined,
         updatedAt: asDate(row.updated_at) ?? undefined,
     };
@@ -129,6 +140,8 @@ export const PAGE_PATCHABLE: Record<string, string> = {
     coverImage: 'cover_image',
     readingTime: 'reading_time',
     publishedAt: 'published_at',
+    folderId: 'folder_id',
+    segment: 'segment',
 };
 
 export function patchToColumns(patch: Partial<StoredPage>): Array<[string, unknown]> {
@@ -140,4 +153,28 @@ export function patchToColumns(patch: Partial<StoredPage>): Array<[string, unkno
         entries.push([col, jsonCols.has(col) && value !== null ? JSON.stringify(value) : value]);
     }
     return entries;
+}
+
+export function folderToRow(f: StoredFolder): Record<string, unknown> {
+    return {
+        id: f.id,
+        tenant: f.tenant ?? '',
+        parent_id: f.parentId,
+        name: f.name,
+        name_mlt: f.nameMlt === null || f.nameMlt === undefined ? null : JSON.stringify(f.nameMlt),
+        segment: f.segment,
+        sort_order: f.sortOrder ?? 0,
+    };
+}
+
+export function rowToFolder(row: Record<string, unknown>): StoredFolder {
+    return {
+        id: String(row.id),
+        tenant: String(row.tenant ?? ''),
+        parentId: (row.parent_id as string | null) ?? null,
+        name: String(row.name),
+        nameMlt: parseJson(row.name_mlt) as StoredFolder['nameMlt'],
+        segment: String(row.segment),
+        sortOrder: Number(row.sort_order ?? 0),
+    };
 }

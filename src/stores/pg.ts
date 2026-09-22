@@ -10,13 +10,16 @@ import {
     StoredCategory,
     StoredPage,
 } from '../store.js';
+import { StoredFolder } from '../addressing.js';
 import {
     authorToRow,
     categoryToRow,
+    folderToRow,
     pageToRow,
     patchToColumns,
     rowToAuthor,
     rowToCategory,
+    rowToFolder,
     rowToPage,
     TableNames,
     tableNames,
@@ -45,7 +48,7 @@ export class PgPageStore implements PageStore {
     }
 
     async ensureSchema(features: SchemaFeatures = {}): Promise<void> {
-        const { pages = true, authors = false, categories = false } = features;
+        const { pages = true, authors = false, categories = false, folders = false } = features;
         if (pages) {
             await this.pool.query(`CREATE TABLE IF NOT EXISTS ${this.t.pages} (
                 slug varchar(255) NOT NULL,
@@ -90,6 +93,30 @@ export class PgPageStore implements PageStore {
                 sort_order integer NOT NULL DEFAULT 0,
                 enabled boolean NOT NULL DEFAULT true,
                 PRIMARY KEY (tenant, kind, slug)
+            )`);
+        }
+        if (folders) {
+            await this.pool.query(`ALTER TABLE ${this.t.pages} ADD COLUMN IF NOT EXISTS folder_id varchar(64)`);
+            await this.pool.query(`ALTER TABLE ${this.t.pages} ADD COLUMN IF NOT EXISTS segment varchar(255)`);
+            await this.pool.query(
+                `CREATE INDEX IF NOT EXISTS ${this.t.pages}_folder_idx ON ${this.t.pages} (tenant, folder_id)`,
+            );
+            await this.pool.query(`CREATE TABLE IF NOT EXISTS ${this.t.folders} (
+                id varchar(64) NOT NULL,
+                tenant varchar(64) NOT NULL DEFAULT '',
+                parent_id varchar(64),
+                name varchar(255) NOT NULL,
+                name_mlt jsonb,
+                segment varchar(64) NOT NULL,
+                sort_order integer NOT NULL DEFAULT 0,
+                PRIMARY KEY (tenant, id)
+            )`);
+            await this.pool.query(`CREATE TABLE IF NOT EXISTS ${this.t.slugHistory} (
+                slug varchar(255) NOT NULL,
+                tenant varchar(64) NOT NULL DEFAULT '',
+                current_slug varchar(255) NOT NULL,
+                created_at timestamptz NOT NULL DEFAULT now(),
+                PRIMARY KEY (tenant, slug)
             )`);
         }
     }
@@ -242,5 +269,70 @@ export class PgPageStore implements PageStore {
             [tenant, kind, slug],
         );
         return (res.rowCount ?? 0) > 0;
+    }
+
+    async listFolders(tenant = ''): Promise<StoredFolder[]> {
+        const { rows } = await this.pool.query(
+            `SELECT * FROM ${this.t.folders} WHERE tenant = $1 ORDER BY sort_order, name`,
+            [tenant],
+        );
+        return rows.map(rowToFolder);
+    }
+
+    async saveFolder(folder: StoredFolder): Promise<StoredFolder> {
+        const row = folderToRow(folder);
+        await this.pool.query(
+            `INSERT INTO ${this.t.folders} (id, tenant, parent_id, name, name_mlt, segment, sort_order)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT (tenant, id) DO UPDATE SET parent_id = $3, name = $4, name_mlt = $5, segment = $6, sort_order = $7`,
+            [row.id, row.tenant, row.parent_id, row.name, row.name_mlt, row.segment, row.sort_order],
+        );
+        return folder;
+    }
+
+    async deleteFolder(id: string, tenant = ''): Promise<boolean> {
+        const res = await this.pool.query(`DELETE FROM ${this.t.folders} WHERE tenant = $1 AND id = $2`, [tenant, id]);
+        return (res.rowCount ?? 0) > 0;
+    }
+
+    async listPagesInFolders(folderIds: ReadonlyArray<string | null>, tenant = ''): Promise<StoredPage[]> {
+        const ids = folderIds.filter((id): id is string => id !== null);
+        const includeRoot = folderIds.includes(null);
+        if (!ids.length && !includeRoot) return [];
+        const { rows } = await this.pool.query(
+            `SELECT * FROM ${this.t.pages} WHERE tenant = $1 AND (folder_id = ANY($2::varchar[])${includeRoot ? ' OR folder_id IS NULL' : ''})`,
+            [tenant, ids],
+        );
+        return rows.map(rowToPage);
+    }
+
+    async renamePage(from: string, to: string, tenant = ''): Promise<void> {
+        if (from === to) return;
+        await this.pool.query(`DELETE FROM ${this.t.slugHistory} WHERE tenant = $1 AND slug = $2`, [tenant, to]);
+        await this.pool.query(
+            `UPDATE ${this.t.pages} SET slug = $3, updated_at = now() WHERE tenant = $1 AND slug = $2`,
+            [tenant, from, to],
+        );
+        await this.pool.query(
+            `UPDATE ${this.t.slugHistory} SET current_slug = $3 WHERE tenant = $1 AND current_slug = $2`,
+            [tenant, from, to],
+        );
+        await this.pool.query(
+            `INSERT INTO ${this.t.slugHistory} (slug, tenant, current_slug) VALUES ($1, $2, $3)
+             ON CONFLICT (tenant, slug) DO UPDATE SET current_slug = $3`,
+            [from, tenant, to],
+        );
+    }
+
+    async resolveFormerSlug(slug: string, tenant = ''): Promise<string | null> {
+        const { rows } = await this.pool.query(
+            `SELECT current_slug FROM ${this.t.slugHistory} WHERE tenant = $1 AND slug = $2`,
+            [tenant, slug],
+        );
+        return rows[0] ? String(rows[0].current_slug) : null;
+    }
+
+    async releaseFormerSlug(slug: string, tenant = ''): Promise<void> {
+        await this.pool.query(`DELETE FROM ${this.t.slugHistory} WHERE tenant = $1 AND slug = $2`, [tenant, slug]);
     }
 }

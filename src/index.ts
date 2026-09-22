@@ -10,3 +10,7 @@ export * from './taxonomy.js';
 export * from './authors.js';
 export * from './store.js';
 export * from './content-model.js';
+export * from './addressing.js';
+export * from './portable.js';
+export * from './sitemap.js';
+export * from './page-addressing.js';

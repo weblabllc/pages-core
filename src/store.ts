@@ -2,6 +2,7 @@ import { PaginationMeta } from './pagination.js';
 import { MultiLangText } from './mlt.js';
 import { AuthorRecord } from './authors.js';
 import { PageStatus, PageType } from './types.js';
+import { StoredFolder } from './addressing.js';
 
 export interface StoredPage {
     slug: string;
@@ -18,6 +19,8 @@ export interface StoredPage {
     coverImage: string | null;
     readingTime: number | null;
     publishedAt: Date | null;
+    folderId?: string | null;
+    segment?: string | null;
     createdAt?: Date;
     updatedAt?: Date;
 }
@@ -56,6 +59,7 @@ export interface SchemaFeatures {
     pages?: boolean;
     authors?: boolean;
     categories?: boolean;
+    folders?: boolean;
 }
 
 export interface PageStore {
@@ -77,6 +81,14 @@ export interface PageStore {
     upsertCategory(category: StoredCategory): Promise<StoredCategory>;
     listCategories(kind: string, options?: { tenant?: string; enabledOnly?: boolean }): Promise<StoredCategory[]>;
     deleteCategory(kind: string, slug: string, tenant?: string): Promise<boolean>;
+
+    listFolders(tenant?: string): Promise<StoredFolder[]>;
+    saveFolder(folder: StoredFolder): Promise<StoredFolder>;
+    deleteFolder(id: string, tenant?: string): Promise<boolean>;
+    listPagesInFolders(folderIds: ReadonlyArray<string | null>, tenant?: string): Promise<StoredPage[]>;
+    renamePage(from: string, to: string, tenant?: string): Promise<void>;
+    resolveFormerSlug(slug: string, tenant?: string): Promise<string | null>;
+    releaseFormerSlug(slug: string, tenant?: string): Promise<void>;
 }
 
 export type PageStoreDriver = 'postgres' | 'mysql' | 'mongodb';

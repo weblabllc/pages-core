@@ -10,6 +10,7 @@ import {
     StoredCategory,
     StoredPage,
 } from '../store.js';
+import { StoredFolder } from '../addressing.js';
 
 interface MongoCollection {
     createIndex(spec: Record<string, unknown>, options?: Record<string, unknown>): Promise<unknown>;
@@ -21,6 +22,7 @@ interface MongoCollection {
         options?: Record<string, unknown>,
     ): Promise<{ matchedCount: number }>;
     deleteOne(filter: Record<string, unknown>): Promise<{ deletedCount: number }>;
+    updateMany(filter: Record<string, unknown>, update: Record<string, unknown>): Promise<unknown>;
     countDocuments(filter: Record<string, unknown>): Promise<number>;
     find(filter: Record<string, unknown>): {
         sort(spec: Record<string, unknown>): {
@@ -79,8 +81,16 @@ export class MongoPageStore implements PageStore {
         return this.db.collection(`${this.prefix}categories`);
     }
 
+    private folders(): MongoCollection {
+        return this.db.collection(`${this.prefix}page_folders`);
+    }
+
+    private slugHistory(): MongoCollection {
+        return this.db.collection(`${this.prefix}page_slug_history`);
+    }
+
     async ensureSchema(features: SchemaFeatures = {}): Promise<void> {
-        const { pages = true, authors = false, categories = false } = features;
+        const { pages = true, authors = false, categories = false, folders = false } = features;
         if (pages) {
             await this.pages().createIndex({ tenant: 1, slug: 1 }, { unique: true });
             await this.pages().createIndex({ tenant: 1, type: 1, status: 1, publishedAt: -1 });
@@ -90,6 +100,12 @@ export class MongoPageStore implements PageStore {
         }
         if (categories) {
             await this.categories().createIndex({ tenant: 1, kind: 1, slug: 1 }, { unique: true });
+        }
+        if (folders) {
+            await this.pages().createIndex({ tenant: 1, folderId: 1 });
+            await this.folders().createIndex({ tenant: 1, id: 1 }, { unique: true });
+            await this.slugHistory().createIndex({ tenant: 1, slug: 1 }, { unique: true });
+            await this.slugHistory().createIndex({ tenant: 1, currentSlug: 1 });
         }
     }
 
@@ -202,5 +218,54 @@ export class MongoPageStore implements PageStore {
     async deleteCategory(kind: string, slug: string, tenant = ''): Promise<boolean> {
         const res = await this.categories().deleteOne({ tenant, kind, slug });
         return res.deletedCount > 0;
+    }
+
+    async listFolders(tenant = ''): Promise<StoredFolder[]> {
+        const docs = await this.folders().find({ tenant }).toArray();
+        return (docs.map(({ _id, ...rest }) => rest) as unknown as StoredFolder[]).sort(
+            (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name),
+        );
+    }
+
+    async saveFolder(folder: StoredFolder): Promise<StoredFolder> {
+        const tenant = folder.tenant ?? '';
+        await this.folders().updateOne({ tenant, id: folder.id }, { $set: { ...folder, tenant } }, { upsert: true });
+        return folder;
+    }
+
+    async deleteFolder(id: string, tenant = ''): Promise<boolean> {
+        const res = await this.folders().deleteOne({ tenant, id });
+        return res.deletedCount > 0;
+    }
+
+    async listPagesInFolders(folderIds: ReadonlyArray<string | null>, tenant = ''): Promise<StoredPage[]> {
+        if (!folderIds.length) return [];
+        const ids = folderIds.filter((id): id is string => id !== null);
+        const or: Record<string, unknown>[] = [];
+        if (ids.length) or.push({ folderId: { $in: ids } });
+        if (folderIds.includes(null)) or.push({ folderId: null });
+        const docs = await this.pages().find({ tenant, $or: or }).toArray();
+        return docs.map(docToPage);
+    }
+
+    async renamePage(from: string, to: string, tenant = ''): Promise<void> {
+        if (from === to) return;
+        await this.slugHistory().deleteOne({ tenant, slug: to });
+        await this.pages().updateOne({ tenant, slug: from }, { $set: { slug: to, updatedAt: new Date() } });
+        await this.slugHistory().updateMany({ tenant, currentSlug: from }, { $set: { currentSlug: to } });
+        await this.slugHistory().updateOne(
+            { tenant, slug: from },
+            { $set: { tenant, slug: from, currentSlug: to, createdAt: new Date() } },
+            { upsert: true },
+        );
+    }
+
+    async resolveFormerSlug(slug: string, tenant = ''): Promise<string | null> {
+        const doc = await this.slugHistory().findOne({ tenant, slug });
+        return doc ? String(doc.currentSlug) : null;
+    }
+
+    async releaseFormerSlug(slug: string, tenant = ''): Promise<void> {
+        await this.slugHistory().deleteOne({ tenant, slug });
     }
 }

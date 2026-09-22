@@ -16,7 +16,7 @@ describe('computeReadingTime', () => {
 });
 
 describe('pagination', () => {
-    it('computes shp-compatible meta', () => {
+    it('computes snake_case pagination meta', () => {
         expect(paginationMeta(53, 2, 25)).toEqual({
             total_count: 53, total_pages: 3, current_page: 2, page_size: 25,
             has_next_page: true, has_prev_page: true,

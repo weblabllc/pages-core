@@ -1,8 +1,8 @@
 {
-  "name": "@risklight/pages-core",
-  "version": "0.1.0",
+  "name": "@weblabllc/pages-core",
+  "version": "0.2.0",
   "type": "module",
-  "description": "Transport- and ORM-agnostic core for Puck-backed content: configurable kinds (page/article/blog), publish lifecycle, MLT, authors, reading time, pagination, optional Postgres/MySQL/MongoDB stores",
+  "description": "Transport- and ORM-agnostic core for Puck-backed content: configurable kinds (page/article/blog), publish lifecycle, MLT, authors, folders with computed slugs and redirects, portable export/import, sitemaps, optional Postgres/MySQL/MongoDB stores",
   "keywords": [
     "cms",
     "puck",
@@ -13,16 +13,18 @@
     "postgres",
     "mysql",
     "mongodb",
-    "typescript"
+    "typescript",
+    "sitemap",
+    "redirects"
   ],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/RiskLightS/pages-core.git"
+    "url": "git+https://github.com/weblabllc/pages-core.git"
   },
-  "homepage": "https://github.com/RiskLightS/pages-core",
+  "homepage": "https://github.com/weblabllc/pages-core#readme",
   "bugs": {
-    "url": "https://github.com/RiskLightS/pages-core/issues"
+    "url": "https://github.com/weblabllc/pages-core/issues"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -49,7 +51,10 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "sideEffects": false,
   "engines": {
@@ -64,10 +69,13 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "build": "tsc",
-    "lint": "oxlint src/"
+    "lint": "oxlint src/",
+    "typecheck": "tsc --noEmit",
+    "test:stores": "docker compose -f docker-compose.test.yml up -d --wait && PAGES_PG_URL=postgres://postgres:test@localhost:55432/pages PAGES_MYSQL_URL=mysql://root:test@localhost:53306/pages PAGES_MONGO_URL=mongodb://localhost:57017 vitest run test/stores"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@vitest/coverage-v8": "^4.1.11",
     "mongodb": "^7.6.0",
     "mysql2": "^3.24.2",
     "oxlint": "^1.80.0",
@@ -90,5 +98,6 @@
     "mongodb": {
       "optional": true
     }
-  }
+  },
+  "author": "WebLab LLC <hello@weblab.llc>"
 }

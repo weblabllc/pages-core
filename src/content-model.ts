@@ -1,3 +1,4 @@
+import { AddressingMode } from './addressing.js';
 import { SchemaFeatures } from './store.js';
 
 export interface KindConfig {
@@ -5,18 +6,23 @@ export interface KindConfig {
     authors?: boolean;
     readingTime?: boolean;
     categoryKind?: string;
+    addressing?: AddressingMode;
+    categoryInPath?: boolean;
 }
 
 export interface ContentModelConfig {
     kinds: Record<string, KindConfig>;
+    folders?: boolean;
 }
 
-export const PAGE_KIND: KindConfig = {};
+export const PAGE_KIND: KindConfig = { addressing: 'nested' };
 
 export const ARTICLE_KIND: KindConfig = {
     taxonomy: true,
     readingTime: true,
     categoryKind: 'article',
+    addressing: 'nested',
+    categoryInPath: true,
 };
 
 export const BLOG_KIND: KindConfig = {
@@ -24,6 +30,7 @@ export const BLOG_KIND: KindConfig = {
     authors: true,
     readingTime: true,
     categoryKind: 'blog',
+    addressing: 'flat',
 };
 
 export class ContentModel {
@@ -64,6 +71,16 @@ export class ContentModel {
         return Boolean(this.kindConfig(kind).readingTime);
     }
 
+    usesFolders(): boolean {
+        return Boolean(this.config.folders);
+    }
+
+    addressing(kind: string): { mode: AddressingMode; categoryInPath: boolean } {
+        const config = this.kindConfig(kind);
+        const mode = this.config.folders ? (config.addressing ?? 'nested') : 'flat';
+        return { mode, categoryInPath: mode === 'nested' && Boolean(config.categoryInPath) };
+    }
+
     categoryKind(kind: string): string | null {
         return this.kindConfig(kind).categoryKind ?? null;
     }
@@ -74,6 +91,7 @@ export class ContentModel {
             pages: true,
             authors: configs.some(c => c.authors),
             categories: configs.some(c => c.taxonomy),
+            folders: Boolean(this.config.folders),
         };
     }
 
@@ -94,14 +112,18 @@ export class ContentModel {
     }
 }
 
-export function articlesOnlyModel(): ContentModel {
-    return new ContentModel({ kinds: { page: PAGE_KIND, article: ARTICLE_KIND } });
+export interface ModelOptions {
+    folders?: boolean;
 }
 
-export function blogOnlyModel(): ContentModel {
-    return new ContentModel({ kinds: { page: PAGE_KIND, blog: BLOG_KIND } });
+export function articlesOnlyModel(options: ModelOptions = {}): ContentModel {
+    return new ContentModel({ kinds: { page: PAGE_KIND, article: ARTICLE_KIND }, ...options });
 }
 
-export function fullBlogModel(): ContentModel {
-    return new ContentModel({ kinds: { page: PAGE_KIND, article: ARTICLE_KIND, blog: BLOG_KIND } });
+export function blogOnlyModel(options: ModelOptions = {}): ContentModel {
+    return new ContentModel({ kinds: { page: PAGE_KIND, blog: BLOG_KIND }, ...options });
+}
+
+export function fullBlogModel(options: ModelOptions = {}): ContentModel {
+    return new ContentModel({ kinds: { page: PAGE_KIND, article: ARTICLE_KIND, blog: BLOG_KIND }, ...options });
 }
