@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { computeReadingTime } from '../src/reading-time.js';
 import { clampPage, paginationMeta } from '../src/pagination.js';
-import { normalizeBlocks } from '../src/blocks.js';
+import { blocksToPlainText, normalizeBlocks } from '../src/blocks.js';
 
 describe('computeReadingTime', () => {
     it('counts words at 200 wpm with minimum 1', () => {
@@ -33,5 +33,38 @@ describe('normalizeBlocks', () => {
             { type: 'quote', text: 'q' },
         ]);
         expect(normalizeBlocks('garbage')).toEqual([]);
+    });
+
+    it('normalizes media blocks and validates the url', () => {
+        expect(normalizeBlocks([
+            { type: 'image', url: '/assets/preview/cover.jpg', text: 'обкладинка' },
+            { type: 'document', url: 'https://example.com/doc.pdf', text: 'Договір' },
+            { type: 'image', url: '//evil.host/x.png', text: 'bad' },
+            { type: 'document', text: 'no url' },
+        ])).toEqual([
+            { type: 'image', url: '/assets/preview/cover.jpg', text: 'обкладинка' },
+            { type: 'document', url: 'https://example.com/doc.pdf', text: 'Договір' },
+            { type: 'image', url: '', text: 'bad' },
+            { type: 'document', url: '', text: 'no url' },
+        ]);
+    });
+
+    it('keeps form blocks and their text, without a url', () => {
+        expect(normalizeBlocks([{ type: 'contact-form' }, { type: 'manuscript-form', text: 'ignored' }])).toEqual([
+            { type: 'contact-form', text: '' },
+            { type: 'manuscript-form', text: 'ignored' },
+        ]);
+    });
+});
+
+describe('blocksToPlainText', () => {
+    it('skips blocks with empty text, such as form blocks', () => {
+        expect(
+            blocksToPlainText([
+                { type: 'paragraph', text: 'Привіт' },
+                { type: 'contact-form', text: '' },
+                { type: 'heading', text: 'Розділ' },
+            ]),
+        ).toBe('Привіт\n\nРозділ');
     });
 });

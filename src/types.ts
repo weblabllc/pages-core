@@ -10,8 +10,9 @@ export interface PuckData {
 }
 
 export interface SimpleBlock {
-    type: 'heading' | 'paragraph' | 'quote';
+    type: 'heading' | 'paragraph' | 'quote' | 'image' | 'document' | 'contact-form' | 'manuscript-form';
     text: string;
+    url?: string;
 }
 
 export interface BlogFields {
