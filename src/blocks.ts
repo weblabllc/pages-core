@@ -11,7 +11,6 @@ const BLOCK_TYPES: ReadonlyArray<SimpleBlock['type']> = [
 ];
 const URL_BLOCK_TYPES: ReadonlyArray<SimpleBlock['type']> = ['image', 'document'];
 
-/** Relative `/assets/...` path or an `http(s)://` URL — rejects `//host/...` and other protocol-relative forms. */
 function isValidBlockUrl(value: unknown): value is string {
     return typeof value === 'string' && (/^\/assets\//.test(value) || /^https?:\/\//.test(value));
 }

@@ -12,7 +12,6 @@ export interface PuckData {
 export interface SimpleBlock {
     type: 'heading' | 'paragraph' | 'quote' | 'image' | 'document' | 'contact-form' | 'manuscript-form';
     text: string;
-    /** Only meaningful for `image`/`document`: relative `/assets/...` path or `http(s)://` URL. */
     url?: string;
 }
 

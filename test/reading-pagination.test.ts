@@ -49,7 +49,7 @@ describe('normalizeBlocks', () => {
         ]);
     });
 
-    it('normalizes form blocks and ignores any text they carry', () => {
+    it('keeps form blocks and their text, without a url', () => {
         expect(normalizeBlocks([{ type: 'contact-form' }, { type: 'manuscript-form', text: 'ignored' }])).toEqual([
             { type: 'contact-form', text: '' },
             { type: 'manuscript-form', text: 'ignored' },
