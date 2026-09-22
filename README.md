@@ -1,5 +1,7 @@
 # @weblabllc/pages-core
 
+[![npm](https://img.shields.io/npm/v/@weblabllc/pages-core)](https://www.npmjs.com/package/@weblabllc/pages-core) [![ci](https://github.com/weblabllc/pages-core/actions/workflows/ci.yml/badge.svg)](https://github.com/weblabllc/pages-core/actions/workflows/ci.yml) [![license](https://img.shields.io/npm/l/@weblabllc/pages-core)](LICENSE)
+
 Transport- and ORM-agnostic backend core for content edited with [Puck](https://puckeditor.com). It covers:
 
 - publish lifecycle and immutable content kinds;
