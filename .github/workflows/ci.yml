@@ -29,7 +29,9 @@ jobs:
       mongo:
         image: mongo:8
         ports: ["27017:27017"]
-        options: --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 })'" --health-interval 2s --health-retries 30
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1})'"
+          --health-interval 2s --health-retries 30
     env:
       PAGES_PG_URL: postgres://postgres:test@localhost:5432/pages
       PAGES_MYSQL_URL: mysql://root:test@localhost:3306/pages
