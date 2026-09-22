@@ -12,7 +12,7 @@ const BLOCK_TYPES: ReadonlyArray<SimpleBlock['type']> = [
 const URL_BLOCK_TYPES: ReadonlyArray<SimpleBlock['type']> = ['image', 'document'];
 
 function isValidBlockUrl(value: unknown): value is string {
-    return typeof value === 'string' && (/^\/assets\//.test(value) || /^https?:\/\//.test(value));
+    return typeof value === 'string' && (value.startsWith('/assets/') || /^https?:\/\//.test(value));
 }
 
 export function normalizeBlocks(value: unknown): SimpleBlock[] {
