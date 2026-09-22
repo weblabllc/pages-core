@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0 — 2026-09-23
+
+- Content blocks: `image` and `document` carry a `url` (a relative `/assets/...` path or an `http(s)` URL; anything else, including protocol-relative `//host`, becomes an empty string), `contact-form` and `manuscript-form` mark where a page renders its forms.
+- `blocksToPlainText` skips blocks with empty text, so form blocks do not add blank paragraphs.
+
 ## 0.2.1 — 2026-09-22
 
 - README badges: npm version, CI status, license.
