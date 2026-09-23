@@ -1,4 +1,7 @@
 import { AddressingMode, ContentError } from './addressing.js';
+import { DataCodec, PUCK_DATA } from './data-codecs.js';
+import { DEFAULT_RESERVED_BLOG_SLUGS } from './validation.js';
+import { PageOrder } from './store.js';
 import { SchemaFeatures } from './store.js';
 
 export interface KindConfig {
@@ -9,12 +12,45 @@ export interface KindConfig {
     addressing?: AddressingMode;
     categoryInPath?: boolean;
     comments?: boolean;
+    data?: DataCodec;
+    segment?: 'slug' | 'path';
+    reservedSlugs?: readonly string[];
+    categoryRequired?: boolean;
+    listing?: KindListing;
 }
+
+export interface KindListing {
+    order: readonly PageOrder[];
+    pageSize: number;
+}
+
+export interface PageLimits {
+    title: number;
+    titleMlt: number;
+    annotation: number;
+    seoTitle: number;
+    seoDescription: number;
+}
+
+export const PAGE_LIMITS: PageLimits = { title: 255, titleMlt: 300, annotation: 1000, seoTitle: 300, seoDescription: 1000 };
+
+export type PublishPolicy = 'first' | 'latest';
+
+const DEFAULT_LISTING: KindListing = { order: [{ field: 'updatedAt', direction: 'desc' }], pageSize: 25 };
+
+const LANG_PATTERN = /^[a-z]{2,3}(-[a-z0-9]+)?$/;
 
 export interface ContentModelConfig {
     kinds: Record<string, KindConfig>;
     folders?: boolean;
     roles?: readonly string[];
+    langs?: readonly string[];
+    primaryLang?: string;
+    limits?: Partial<PageLimits>;
+    publishedAt?: PublishPolicy;
+    slugHistory?: boolean;
+    maxPageSize?: number;
+    defaultAuthor?: string | null;
 }
 
 export const DEFAULT_PAGE_ROLES = ['offer', 'privacy', 'returns'] as const;
@@ -29,6 +65,8 @@ export const ARTICLE_KIND: KindConfig = {
     categoryKind: 'article',
     addressing: 'nested',
     categoryInPath: true,
+    categoryRequired: true,
+    listing: { order: [{ field: 'publishedAt', direction: 'desc' }], pageSize: 9 },
 };
 
 export const BLOG_KIND: KindConfig = {
@@ -38,12 +76,28 @@ export const BLOG_KIND: KindConfig = {
     categoryKind: 'blog',
     addressing: 'flat',
     comments: true,
+    categoryRequired: true,
+    reservedSlugs: DEFAULT_RESERVED_BLOG_SLUGS,
+    listing: {
+        order: [
+            { field: 'pinned', direction: 'desc' },
+            { field: 'publishedAt', direction: 'desc' },
+        ],
+        pageSize: 9,
+    },
 };
 
 export class ContentModel {
     constructor(private config: ContentModelConfig) {
         if (!Object.keys(config.kinds).length) {
             throw new Error('ContentModel requires at least one kind');
+        }
+        const langs = config.langs ?? ['en'];
+        if (!langs.length || !langs.every(lang => LANG_PATTERN.test(lang))) {
+            throw new Error(`Invalid language list: ${JSON.stringify(langs)}`);
+        }
+        if (config.primaryLang !== undefined && !langs.includes(config.primaryLang)) {
+            throw new Error(`The primary language "${config.primaryLang}" is not in the language list`);
         }
         for (const role of config.roles ?? []) {
             if (!ROLE_PATTERN.test(role)) throw new Error(`Invalid page role "${role}": lowercase latin, digits, dashes, up to 32 chars`);
@@ -79,6 +133,42 @@ export class ContentModel {
 
     usesReadingTime(kind: string): boolean {
         return Boolean(this.kindConfig(kind).readingTime);
+    }
+
+    langs(): string[] {
+        return [...(this.config.langs ?? ['en'])];
+    }
+
+    primaryLang(): string {
+        return this.config.primaryLang ?? this.langs()[0];
+    }
+
+    limits(): PageLimits {
+        return { ...PAGE_LIMITS, ...this.config.limits };
+    }
+
+    publishPolicy(): PublishPolicy {
+        return this.config.publishedAt ?? 'first';
+    }
+
+    usesSlugHistory(): boolean {
+        return this.config.slugHistory ?? Boolean(this.config.folders);
+    }
+
+    maxPageSize(): number {
+        return this.config.maxPageSize ?? 100;
+    }
+
+    defaultAuthor(): string | null {
+        return this.config.defaultAuthor ?? null;
+    }
+
+    dataCodec(kind: string): DataCodec {
+        return this.kindConfig(kind).data ?? PUCK_DATA;
+    }
+
+    listing(kind: string): KindListing {
+        return this.kindConfig(kind).listing ?? DEFAULT_LISTING;
     }
 
     roles(): string[] {
@@ -123,6 +213,7 @@ export class ContentModel {
             folders: Boolean(this.config.folders),
             roles: this.usesRoles(),
             comments: configs.some(c => c.comments),
+            slugHistory: this.usesSlugHistory(),
         };
     }
 

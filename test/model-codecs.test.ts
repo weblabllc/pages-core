@@ -80,9 +80,9 @@ describe('PUCK_DATA codec', () => {
     const langs = ['en', 'ua'];
     const valid = { root: { props: { title: 'Hi', slug: 'hi' } }, content: [{ type: 'Text', props: { id: 't1', text: { en: 'one two', ua: 'раз два три' } } }] };
 
-    it('accepts valid Puck data and counts primary-language words', () => {
+    it('accepts valid Puck data and counts words the way shp does (every string in content, primary language of translations)', () => {
         expect(PUCK_DATA.validate(valid, langs)).toEqual(valid);
-        expect(PUCK_DATA.words(valid, 'ua', langs)).toBe(3);
+        expect(PUCK_DATA.words(valid, 'ua', langs)).toBe(5);
         expect(PUCK_DATA.meta!(valid)).toEqual({ title: 'Hi', segment: 'hi' });
     });
 

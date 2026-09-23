@@ -10,9 +10,9 @@ describe('ContentModel', () => {
     });
 
     it('derives schema features from enabled kinds', () => {
-        expect(articlesOnlyModel().schemaFeatures()).toEqual({ pages: true, authors: false, categories: true, folders: false, roles: false, comments: false });
-        expect(blogOnlyModel().schemaFeatures()).toEqual({ pages: true, authors: true, categories: true, folders: false, roles: false, comments: true });
-        expect(new ContentModel({ kinds: { page: PAGE_KIND } }).schemaFeatures()).toEqual({ pages: true, authors: false, categories: false, folders: false, roles: false, comments: false });
+        expect(articlesOnlyModel().schemaFeatures()).toEqual({ pages: true, authors: false, categories: true, folders: false, roles: false, comments: false, slugHistory: false });
+        expect(blogOnlyModel().schemaFeatures()).toEqual({ pages: true, authors: true, categories: true, folders: false, roles: false, comments: true, slugHistory: false });
+        expect(new ContentModel({ kinds: { page: PAGE_KIND } }).schemaFeatures()).toEqual({ pages: true, authors: false, categories: false, folders: false, roles: false, comments: false, slugHistory: false });
         expect(articlesOnlyModel({ folders: true }).schemaFeatures().folders).toBe(true);
     });
 

@@ -17,3 +17,4 @@ export * from './page-addressing.js';
 export * from './page-roles.js';
 export * from './comments.js';
 export * from './page-comments.js';
+export * from './data-codecs.js';

@@ -43,6 +43,13 @@ export interface StoredAuthor extends AuthorRecord {
     tenant: string;
 }
 
+export type PageSortField = 'publishedAt' | 'updatedAt' | 'createdAt' | 'readingTime' | 'title' | 'pinned' | 'id';
+
+export interface PageOrder {
+    field: PageSortField;
+    direction: 'asc' | 'desc';
+}
+
 export interface PageListQuery {
     tenant?: string;
     type?: PageType;
@@ -67,6 +74,7 @@ export interface SchemaFeatures {
     folders?: boolean;
     roles?: boolean;
     comments?: boolean;
+    slugHistory?: boolean;
 }
 
 export interface PageStore {
