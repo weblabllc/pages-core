@@ -3,6 +3,7 @@ import { canDeleteAuthor, isValidAuthorSlug, validateAuthorCreate, validateAutho
 import { ContentModel } from './content-model.js';
 import { sanitizeMlt } from './mlt.js';
 import { PageStore, StoredAuthor, StoredCategory } from './store.js';
+import { inTransaction } from './writes.js';
 
 export const CATEGORY_LIMITS = { slug: 64, name: 100 } as const;
 
@@ -52,11 +53,13 @@ export class PageTaxonomy {
     async deleteCategory(kind: string, slug: string): Promise<void> {
         this.assertCategoryKind(kind);
         const kinds = this.model.kinds().filter(k => this.model.usesTaxonomy(k) && (this.model.categoryKind(k) ?? k) === kind);
-        const used = await this.store.countPages({ tenant: this.tenant, types: kinds, category: slug });
-        if (used) throw new ContentError('category_in_use', `Category "${slug}" is used by ${used} page(s)`, { slug, pages: used });
-        if (!(await this.store.deleteCategory(kind, slug, this.tenant))) {
-            throw new ContentError('not_found', `Category "${slug}" not found`, { slug });
-        }
+        await inTransaction(this.store, async tx => {
+            const used = await tx.countPages({ tenant: this.tenant, types: kinds, category: slug });
+            if (used) throw new ContentError('category_in_use', `Category "${slug}" is used by ${used} page(s)`, { slug, pages: used });
+            if (!(await tx.deleteCategory(kind, slug, this.tenant))) {
+                throw new ContentError('not_found', `Category "${slug}" not found`, { slug });
+            }
+        });
     }
 
     async authors(options: { enabledOnly?: boolean } = {}): Promise<StoredAuthor[]> {
@@ -79,12 +82,14 @@ export class PageTaxonomy {
     }
 
     async deleteAuthor(slug: string): Promise<void> {
-        const used = await this.store.countPages({ tenant: this.tenant, authorSlug: slug });
-        const verdict = canDeleteAuthor(used);
-        if (!verdict.ok) throw new ContentError('author_in_use', verdict.reason, { slug, pages: used });
-        if (!(await this.store.deleteAuthor(slug, this.tenant))) {
-            throw new ContentError('not_found', `Author "${slug}" not found`, { slug });
-        }
+        await inTransaction(this.store, async tx => {
+            const used = await tx.countPages({ tenant: this.tenant, authorSlug: slug });
+            const verdict = canDeleteAuthor(used);
+            if (!verdict.ok) throw new ContentError('author_in_use', verdict.reason, { slug, pages: used });
+            if (!(await tx.deleteAuthor(slug, this.tenant))) {
+                throw new ContentError('not_found', `Author "${slug}" not found`, { slug });
+            }
+        });
     }
 
     private assertCategoryKind(kind: string): void {

@@ -12,5 +12,5 @@ export function isReservedSlug(slug: string, reserved: readonly string[] = DEFAU
 }
 
 export function isValidImageUrl(value: unknown, maxLen = 512): boolean {
-    return typeof value === 'string' && value.length <= maxLen && /^(https?:\/\/|\/(?!\/))/.test(value);
+    return typeof value === 'string' && value.length <= maxLen && /^(https?:\/\/|\/(?!\/))[^\s"'<>\\`]*$/.test(value);
 }

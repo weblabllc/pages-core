@@ -124,6 +124,16 @@ for (const [name, options] of targets) {
                 expect(again.page!.publishedAt!.getTime()).toBe(firstDate);
             });
 
+            it('clears the publication date on unpublish when the policy is latest', async () => {
+                const latest = new PageService(store, new ContentModel({ kinds: { page: PAGE_KIND }, publishedAt: 'latest' }));
+                const { page } = await latest.create({ type: 'page', segment: 'news-latest' });
+                const published = await latest.publish(page!.id);
+                expect(published.page!.publishedAt).toBeInstanceOf(Date);
+                const hidden = await latest.unpublish(page!.id);
+                expect(hidden.page).toMatchObject({ status: 'draft', publishedAt: null });
+                expect(hidden.changes).toEqual([{ id: page!.id, slug: 'news-latest', type: 'page', reason: 'unpublished' }]);
+            });
+
             it('gives each language its own view, falling back to the primary one', async () => {
                 const about = (await queries.getBySlug('about'))!;
                 expect(queries.localizedView(about, 'uk')).toMatchObject({ languageCode: 'uk', title: 'Про нас' });
@@ -288,6 +298,18 @@ for (const [name, options] of targets) {
                 expect(await code(comments.submit('about', { authorName: 'A', content: 'x', rating: null }))).toBe('comments_disabled');
                 expect(await code(comments.approved('about'))).toBe('not_found');
                 expect(await code(comments.approved('first-post'))).toBe('not_found');
+            });
+
+            it('rejects and removes comments, and keeps rejected ones out of the public list', async () => {
+                const c = await comments.submit('post-c', { authorName: 'C', content: 'Meh', rating: 1 });
+                await comments.moderate(c.id, 'rejected', 'mod');
+                const view = await comments.approved('post-c');
+                expect(view.rows.map(r => r.authorName)).toEqual(['B']);
+                expect(view.rating).toEqual({ avg: 4, count: 1 });
+                expect(view.rows[0]).not.toHaveProperty('authorEmail');
+                await comments.remove(c.id);
+                expect(await code(comments.remove(c.id))).toBe('not_found');
+                expect(await code(comments.moderate(c.id, 'approved', 'mod'))).toBe('not_found');
             });
 
             it('searches the moderation queue and names the page of each comment', async () => {

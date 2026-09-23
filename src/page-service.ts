@@ -44,8 +44,8 @@ export class PageService {
         const draft = validatePageInput(raw, { model: this.model, mode: 'create' });
         const kind = draft.type!;
         if (this.model.usesAuthors(kind) && !draft.authorSlug) draft.authorSlug = this.model.defaultAuthor();
-        await this.checkReferences(kind, draft, null);
         return inTransaction(this.store, async tx => {
+            await this.checkReferences(tx, kind, draft, null);
             const folderId = draft.folderId ?? null;
             const slug = await slugFor(tx, this.model, this.tenant, { type: kind, category: draft.category, folderId, segment: draft.segment! });
             await assertSlugFree(tx, this.tenant, slug, null);
@@ -88,7 +88,6 @@ export class PageService {
     async update(id: string, raw: unknown): Promise<PageMutation> {
         const current = await this.require(this.store, id);
         const draft = validatePageInput(raw, { model: this.model, mode: 'update', current });
-        await this.checkReferences(current.type, draft, current);
         return inTransaction(this.store, async tx => this.applyDraft(tx, await this.require(tx, id), draft, 'updated'));
     }
 
@@ -124,7 +123,6 @@ export class PageService {
         const current = await this.require(this.store, id);
         const input = assertPortableIdentity(body, { slug: current.slug, type: current.type });
         const draft = validatePageInput(input, { model: this.model, mode: 'import', current });
-        await this.checkReferences(current.type, draft, current);
         return inTransaction(this.store, async tx => this.applyDraft(tx, await this.require(tx, id), draft, 'updated'));
     }
 
@@ -140,6 +138,7 @@ export class PageService {
     }
 
     private async applyDraft(tx: PageStore, current: StoredPage, draft: PageDraft, reason: 'updated' | 'moved'): Promise<PageMutation> {
+        await this.checkReferences(tx, current.type, draft, current);
         const patch: PagePatch = {};
         for (const field of CONTENT_FIELDS) {
             if (draft[field] !== undefined) (patch as Record<string, unknown>)[field] = draft[field];
@@ -171,18 +170,18 @@ export class PageService {
         return { page, changes };
     }
 
-    private async checkReferences(kind: string, draft: PageDraft, current: StoredPage | null): Promise<void> {
+    private async checkReferences(tx: PageStore, kind: string, draft: PageDraft, current: StoredPage | null): Promise<void> {
         const config = this.model.kindConfig(kind);
         if (config.taxonomy) {
             const category = draft.category !== undefined ? draft.category : (current?.category ?? null);
             if (config.categoryRequired && !category) invalid('category', 'A category is required');
             if (draft.category) {
-                const found = await this.store.getCategory(this.model.categoryKind(kind) ?? kind, draft.category, this.tenant);
+                const found = await tx.getCategory(this.model.categoryKind(kind) ?? kind, draft.category, this.tenant);
                 if (!found || !found.enabled) invalid('category', `Category "${draft.category}" does not exist or is disabled`);
             }
         }
         if (config.authors && draft.authorSlug) {
-            const author = await this.store.getAuthor(draft.authorSlug, this.tenant);
+            const author = await tx.getAuthor(draft.authorSlug, this.tenant);
             if (!author || !author.enabled) invalid('authorSlug', `Author "${draft.authorSlug}" does not exist or is disabled`);
         }
     }

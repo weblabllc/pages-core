@@ -54,6 +54,9 @@ describe('validatePageInput', () => {
     it('accepts only real booleans for pinned and safe cover images', () => {
         expect(fail(() => validatePageInput({ pinned: 'true' }, { model, mode: 'update', current: current() }))).toBe('invalid_page:pinned');
         expect(fail(() => validatePageInput({ coverImage: '//evil/x.png' }, { model, mode: 'update', current: current() }))).toBe('invalid_page:coverImage');
+        for (const coverImage of ['javascript:alert(1)', 'https://x/a.png" onerror="alert(1)', '/a b.png', "/a'.png", '/<svg>.png']) {
+            expect(fail(() => validatePageInput({ coverImage }, { model, mode: 'update', current: current() }))).toBe('invalid_page:coverImage');
+        }
         expect(validatePageInput({ coverImage: null, pinned: true }, { model, mode: 'update', current: current() })).toMatchObject({ coverImage: null, pinned: true });
     });
 

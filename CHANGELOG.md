@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.6.0 — 2026-09-24
+
+Pages get a stable id, and every rule moves into services that write inside a transaction.
+
+**Breaking**
+
+- `StoredPage.id` (UUIDv7) is required. Tables are keyed by `(tenant, id)` with a unique `(tenant, slug)`. `ensureSchema` upgrades 0.5 tables in place (see README, "Upgrading from 0.5"). Stop 0.5 writers during the upgrade.
+- Store port:
+  - `getPage` becomes `getPageById` / `getPageBySlug`;
+  - `updatePage`, `deletePage` and `setRole` take an id;
+  - `renamePage`, `listPagesInFolders` and `listApprovedRatings` are gone;
+  - `resolveFormerSlug` returns a page id;
+  - `transaction(fn)` is required;
+  - `listPages` requires `order`, `page` and `pageSize`, and `search` is an object;
+  - `updatePage` never writes `type`, `role`, `createdBy` or `id`.
+- `PageAddressing`, `PageRoles` and `PageComments` work by page id. `resolve` redirects only to published pages. `prepareNew` and `place` are replaced by `PageService`.
+- `validatePortablePage` returns content fields only.
+- `BLOG_KIND` and `ARTICLE_KIND` require a category.
+- `applyPublish` / `applyUnpublish` take a publish policy.
+- MySQL 8.0.16+ is required.
+
+**New**
+
+- `PageService`: create, update, move, publish, unpublish, delete, export, import. Each write runs in one transaction and returns `{ page, changes }` for cache revalidation.
+- `PageQueries`:
+  - public lists (cards with author and rating) and admin lists from raw query params;
+  - `publishedPage` with breadcrumbs, author and rating;
+  - `publishedIndex` for sitemaps;
+  - `localizedView`.
+- `PageTaxonomy`: categories and authors, with deletion refused while pages use them.
+- `ContentModel` settings:
+  - languages and a primary language;
+  - length limits;
+  - `publishedAt: 'first' | 'latest'`;
+  - `slugHistory` without folders;
+  - `maxPageSize`;
+  - `defaultAuthor`.
+- Kind settings: data codecs (`PUCK_DATA`, `localizedBlocksData()`), `categoryRequired`, `reservedSlugs`, per-kind `listing`, `comments`.
+- Page input rules in one place (`validatePageInput`). List parameters parsed in one place (`parseListParams`, `parseCommentListParams`).
+- Stores:
+  - `transaction` with `clientMode: 'pool' | 'bound'`;
+  - `StoreConflictError`;
+  - `card` and `index` projections;
+  - filters by several types, category presence, folder sets and ids;
+  - multi-language search that matches `%` and `_` literally;
+  - a stable order with an id tiebreaker.
+- Comments are keyed by page id, with database checks on rating and status, database-side rating totals, and queue search and sort.
+- Folder siblings are unique in the database.
+- MySQL identity columns use `utf8mb4_bin`.
+- `tablePrefix` is limited to 20 characters.
+- Sitemap `sections` option.
+
 ## 0.5.0 — 2026-09-24
 
 - SEO: every page has `seoTitle` and `seoDescription` (multi-language). `ensureSchema` adds the columns to existing tables; export and import carry them and validate their translations.
