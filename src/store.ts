@@ -21,6 +21,7 @@ export interface StoredPage {
     publishedAt: Date | null;
     folderId?: string | null;
     segment?: string | null;
+    role?: string | null;
     createdAt?: Date;
     updatedAt?: Date;
 }
@@ -60,6 +61,7 @@ export interface SchemaFeatures {
     authors?: boolean;
     categories?: boolean;
     folders?: boolean;
+    roles?: boolean;
 }
 
 export interface PageStore {
@@ -89,6 +91,9 @@ export interface PageStore {
     renamePage(from: string, to: string, tenant?: string): Promise<void>;
     resolveFormerSlug(slug: string, tenant?: string): Promise<string | null>;
     releaseFormerSlug(slug: string, tenant?: string): Promise<void>;
+
+    assignRole(slug: string, role: string | null, tenant?: string): Promise<{ released: string | null }>;
+    listPagesWithRole(tenant?: string): Promise<StoredPage[]>;
 }
 
 export type PageStoreDriver = 'postgres' | 'mysql' | 'mongodb';

@@ -1,4 +1,4 @@
-import { AddressingMode } from './addressing.js';
+import { AddressingMode, ContentError } from './addressing.js';
 import { SchemaFeatures } from './store.js';
 
 export interface KindConfig {
@@ -13,7 +13,12 @@ export interface KindConfig {
 export interface ContentModelConfig {
     kinds: Record<string, KindConfig>;
     folders?: boolean;
+    roles?: readonly string[];
 }
+
+export const DEFAULT_PAGE_ROLES = ['offer', 'privacy', 'returns'] as const;
+
+const ROLE_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 
 export const PAGE_KIND: KindConfig = { addressing: 'nested' };
 
@@ -37,6 +42,9 @@ export class ContentModel {
     constructor(private config: ContentModelConfig) {
         if (!Object.keys(config.kinds).length) {
             throw new Error('ContentModel requires at least one kind');
+        }
+        for (const role of config.roles ?? []) {
+            if (!ROLE_PATTERN.test(role)) throw new Error(`Invalid page role "${role}": lowercase latin, digits, dashes, up to 32 chars`);
         }
     }
 
@@ -71,6 +79,21 @@ export class ContentModel {
         return Boolean(this.kindConfig(kind).readingTime);
     }
 
+    roles(): string[] {
+        return [...(this.config.roles ?? [])];
+    }
+
+    usesRoles(): boolean {
+        return this.roles().length > 0;
+    }
+
+    assertRole(role: string | null): void {
+        if (role === null) return;
+        if (!this.roles().includes(role)) {
+            throw new ContentError('invalid_role', `Page role "${role}" is not enabled (enabled: ${this.roles().join(', ') || 'none'})`, { role });
+        }
+    }
+
     usesFolders(): boolean {
         return Boolean(this.config.folders);
     }
@@ -92,6 +115,7 @@ export class ContentModel {
             authors: configs.some(c => c.authors),
             categories: configs.some(c => c.taxonomy),
             folders: Boolean(this.config.folders),
+            roles: this.usesRoles(),
         };
     }
 
@@ -114,6 +138,7 @@ export class ContentModel {
 
 export interface ModelOptions {
     folders?: boolean;
+    roles?: readonly string[];
 }
 
 export function articlesOnlyModel(options: ModelOptions = {}): ContentModel {

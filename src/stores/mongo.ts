@@ -90,7 +90,7 @@ export class MongoPageStore implements PageStore {
     }
 
     async ensureSchema(features: SchemaFeatures = {}): Promise<void> {
-        const { pages = true, authors = false, categories = false, folders = false } = features;
+        const { pages = true, authors = false, categories = false, folders = false, roles = false } = features;
         if (pages) {
             await this.pages().createIndex({ tenant: 1, slug: 1 }, { unique: true });
             await this.pages().createIndex({ tenant: 1, type: 1, status: 1, publishedAt: -1 });
@@ -100,6 +100,12 @@ export class MongoPageStore implements PageStore {
         }
         if (categories) {
             await this.categories().createIndex({ tenant: 1, kind: 1, slug: 1 }, { unique: true });
+        }
+        if (roles) {
+            await this.pages().createIndex(
+                { tenant: 1, role: 1 },
+                { unique: true, partialFilterExpression: { role: { $type: 'string' } } },
+            );
         }
         if (folders) {
             await this.pages().createIndex({ tenant: 1, folderId: 1 });
@@ -258,6 +264,24 @@ export class MongoPageStore implements PageStore {
             { $set: { tenant, slug: from, currentSlug: to, createdAt: new Date() } },
             { upsert: true },
         );
+    }
+
+    async assignRole(slug: string, role: string | null, tenant = ''): Promise<{ released: string | null }> {
+        let released: string | null = null;
+        if (role) {
+            const holder = await this.pages().findOne({ tenant, role, slug: { $ne: slug } });
+            if (holder) {
+                released = String(holder.slug);
+                await this.pages().updateOne({ tenant, slug: released }, { $set: { role: null, updatedAt: new Date() } });
+            }
+        }
+        await this.pages().updateOne({ tenant, slug }, { $set: { role, updatedAt: new Date() } });
+        return { released };
+    }
+
+    async listPagesWithRole(tenant = ''): Promise<StoredPage[]> {
+        const docs = await this.pages().find({ tenant, role: { $type: 'string' } }).toArray();
+        return docs.map(docToPage).sort((a, b) => String(a.role).localeCompare(String(b.role)));
     }
 
     async resolveFormerSlug(slug: string, tenant = ''): Promise<string | null> {

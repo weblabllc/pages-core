@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ARTICLE_KIND, articlesOnlyModel, BLOG_KIND, blogOnlyModel, ContentModel, fullBlogModel, PAGE_KIND } from '../src/content-model.js';
+import { ARTICLE_KIND, articlesOnlyModel, BLOG_KIND, blogOnlyModel, ContentModel, DEFAULT_PAGE_ROLES, fullBlogModel, PAGE_KIND } from '../src/content-model.js';
+import { ContentError } from '../src/addressing.js';
 
 describe('ContentModel', () => {
     it('gates kinds to the configured set', () => {
@@ -9,9 +10,9 @@ describe('ContentModel', () => {
     });
 
     it('derives schema features from enabled kinds', () => {
-        expect(articlesOnlyModel().schemaFeatures()).toEqual({ pages: true, authors: false, categories: true, folders: false });
-        expect(blogOnlyModel().schemaFeatures()).toEqual({ pages: true, authors: true, categories: true, folders: false });
-        expect(new ContentModel({ kinds: { page: PAGE_KIND } }).schemaFeatures()).toEqual({ pages: true, authors: false, categories: false, folders: false });
+        expect(articlesOnlyModel().schemaFeatures()).toEqual({ pages: true, authors: false, categories: true, folders: false, roles: false });
+        expect(blogOnlyModel().schemaFeatures()).toEqual({ pages: true, authors: true, categories: true, folders: false, roles: false });
+        expect(new ContentModel({ kinds: { page: PAGE_KIND } }).schemaFeatures()).toEqual({ pages: true, authors: false, categories: false, folders: false, roles: false });
         expect(articlesOnlyModel({ folders: true }).schemaFeatures().folders).toBe(true);
     });
 
@@ -37,5 +38,19 @@ describe('ContentModel', () => {
         const article = model.taxonomyFieldsFor('article', { category: 'news', authorSlug: 'a' });
         expect(article.category).toBe('news');
         expect(article.authorSlug).toBeNull();
+    });
+});
+
+describe('page roles in the model', () => {
+    it('enables roles per model and validates them', () => {
+        const model = new ContentModel({ kinds: { page: PAGE_KIND }, roles: DEFAULT_PAGE_ROLES });
+        expect(model.roles()).toEqual(['offer', 'privacy', 'returns']);
+        expect(model.schemaFeatures().roles).toBe(true);
+        expect(() => model.assertRole('offer')).not.toThrow();
+        expect(() => model.assertRole(null)).not.toThrow();
+        expect(() => model.assertRole('about')).toThrowError(ContentError);
+        expect(new ContentModel({ kinds: { page: PAGE_KIND } }).schemaFeatures().roles).toBe(false);
+        expect(() => new ContentModel({ kinds: { page: PAGE_KIND }, roles: ['Bad Role'] })).toThrow(/Invalid page role/);
+        expect(articlesOnlyModel({ roles: ['about', 'contacts'] }).roles()).toEqual(['about', 'contacts']);
     });
 });

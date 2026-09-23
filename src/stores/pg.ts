@@ -48,7 +48,7 @@ export class PgPageStore implements PageStore {
     }
 
     async ensureSchema(features: SchemaFeatures = {}): Promise<void> {
-        const { pages = true, authors = false, categories = false, folders = false } = features;
+        const { pages = true, authors = false, categories = false, folders = false, roles = false } = features;
         if (pages) {
             await this.pool.query(`CREATE TABLE IF NOT EXISTS ${this.t.pages} (
                 slug varchar(255) NOT NULL,
@@ -94,6 +94,12 @@ export class PgPageStore implements PageStore {
                 enabled boolean NOT NULL DEFAULT true,
                 PRIMARY KEY (tenant, kind, slug)
             )`);
+        }
+        if (roles) {
+            await this.pool.query(`ALTER TABLE ${this.t.pages} ADD COLUMN IF NOT EXISTS role varchar(32)`);
+            await this.pool.query(
+                `CREATE UNIQUE INDEX IF NOT EXISTS ${this.t.pages}_role_idx ON ${this.t.pages} (tenant, role) WHERE role IS NOT NULL`,
+            );
         }
         if (folders) {
             await this.pool.query(`ALTER TABLE ${this.t.pages} ADD COLUMN IF NOT EXISTS folder_id varchar(64)`);
@@ -322,6 +328,30 @@ export class PgPageStore implements PageStore {
              ON CONFLICT (tenant, slug) DO UPDATE SET current_slug = $3`,
             [from, tenant, to],
         );
+    }
+
+    async assignRole(slug: string, role: string | null, tenant = ''): Promise<{ released: string | null }> {
+        let released: string | null = null;
+        if (role) {
+            const { rows } = await this.pool.query(
+                `UPDATE ${this.t.pages} SET role = NULL, updated_at = now() WHERE tenant = $1 AND role = $2 AND slug <> $3 RETURNING slug`,
+                [tenant, role, slug],
+            );
+            released = rows[0] ? String(rows[0].slug) : null;
+        }
+        await this.pool.query(`UPDATE ${this.t.pages} SET role = $3, updated_at = now() WHERE tenant = $1 AND slug = $2`, [
+            tenant,
+            slug,
+            role,
+        ]);
+        return { released };
+    }
+
+    async listPagesWithRole(tenant = ''): Promise<StoredPage[]> {
+        const { rows } = await this.pool.query(`SELECT * FROM ${this.t.pages} WHERE tenant = $1 AND role IS NOT NULL ORDER BY role`, [
+            tenant,
+        ]);
+        return rows.map(rowToPage);
     }
 
     async resolveFormerSlug(slug: string, tenant = ''): Promise<string | null> {

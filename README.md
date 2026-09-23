@@ -114,7 +114,30 @@ Failures throw a `ContentError` with a `code` and an HTTP `status`:
 
 With folders off, every kind stays flat and nothing changes for existing data.
 
-## Export / import
+## Page roles
+
+A role marks the one page that plays a part the site links to on its own: the public offer, the privacy policy, the returns policy. Code asks for the role and gets whatever page currently holds it, so renaming a page or changing its slug never breaks a link.
+
+```ts
+import { ContentModel, DEFAULT_PAGE_ROLES, PAGE_KIND, PageRoles } from '@weblabllc/pages-core'
+
+const model = new ContentModel({ kinds: { page: PAGE_KIND }, roles: DEFAULT_PAGE_ROLES })
+await store.ensureSchema(model.schemaFeatures())         // adds the role column and a unique (tenant, role) index
+const roles = new PageRoles(store, model, tenant)
+
+await roles.assign('publichna-oferta', 'offer')          // { released: null }
+await roles.assign('oferta-2027', 'offer')               // { released: 'publichna-oferta' } — the role moves
+await roles.links({ basePath: '' })                      // { offer: { role, slug: 'oferta-2027', title, path: '/oferta-2027' } }
+```
+
+The rules:
+
+- `DEFAULT_PAGE_ROLES` is `offer`, `privacy`, `returns`. Pass your own list to add `about`, `contacts` or anything else.
+- A role belongs to one page per tenant. Assigning it to another page takes it from the previous holder.
+- `links()` returns only published pages unless `publishedOnly: false`.
+- Pages without a role are not affected.
+
+
 
 ```ts
 import { exportPortablePage, validatePortablePage } from '@weblabllc/pages-core'

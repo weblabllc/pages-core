@@ -14,3 +14,4 @@ export * from './addressing.js';
 export * from './portable.js';
 export * from './sitemap.js';
 export * from './page-addressing.js';
+export * from './page-roles.js';

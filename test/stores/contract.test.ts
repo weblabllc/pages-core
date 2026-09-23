@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ContentError, createPageStore, fullBlogModel, PageAddressing, PageStore, PageStoreOptions, StoredPage } from '../../src/index.js';
+import { ContentError, ContentModel, createPageStore, DEFAULT_PAGE_ROLES, fullBlogModel, PAGE_KIND, PageAddressing, PageRoles, PageStore, PageStoreOptions, StoredPage } from '../../src/index.js';
 
 const targets: Array<[string, PageStoreOptions | null]> = [
     ['postgres', process.env.PAGES_PG_URL ? { driver: 'postgres', url: process.env.PAGES_PG_URL } : null],
@@ -44,8 +44,8 @@ for (const [name, options] of targets) {
             store = await createPageStore({ ...options!, tablePrefix: prefix });
             await store.ensureSchema({ pages: true, authors: true, categories: true });
             await store.createPage(page('legacy'));
-            await store.ensureSchema({ pages: true, authors: true, categories: true, folders: true });
-            await store.ensureSchema({ pages: true, authors: true, categories: true, folders: true });
+            await store.ensureSchema({ pages: true, authors: true, categories: true, folders: true, roles: true });
+            await store.ensureSchema({ pages: true, authors: true, categories: true, folders: true, roles: true });
         });
 
         afterAll(async () => {
@@ -99,6 +99,47 @@ for (const [name, options] of targets) {
             await store.upsertCategory({ slug: 'tips', tenant: '', kind: 'blog', name: { en: 'Tips' }, sortOrder: 1, enabled: true });
             expect((await store.listCategories('blog')).map(c => c.slug)).toEqual(['tips', 'news']);
             expect(await store.deleteCategory('blog', 'tips')).toBe(true);
+        });
+
+        describe('page roles', () => {
+            const roles = () => new PageRoles(store, new ContentModel({ kinds: { page: PAGE_KIND }, roles: DEFAULT_PAGE_ROLES }));
+
+            beforeAll(async () => {
+                for (const slug of ['oferta', 'oferta-v2', 'privacy', 'plain-1', 'plain-2']) {
+                    await store.createPage(page(slug, { status: slug === 'privacy' ? 'draft' : 'published' }));
+                }
+            });
+
+            it('assigns roles and moves a role to its new page', async () => {
+                expect(await roles().assign('oferta', 'offer')).toEqual({ released: null });
+                await roles().assign('privacy', 'privacy');
+                expect(await roles().assign('oferta-v2', 'offer')).toEqual({ released: 'oferta' });
+                expect((await store.getPage('oferta'))?.role ?? null).toBeNull();
+                expect((await store.getPage('oferta-v2'))?.role).toBe('offer');
+                expect((await store.listPagesWithRole()).map(p => [p.slug, p.role])).toEqual([['oferta-v2', 'offer'], ['privacy', 'privacy']]);
+            });
+
+            it('exposes only published pages as links', async () => {
+                expect(Object.keys(await roles().links())).toEqual(['offer']);
+                expect(Object.keys(await roles().links({ publishedOnly: false })).sort()).toEqual(['offer', 'privacy']);
+            });
+
+            it('keeps many pages without a role and refuses unknown roles', async () => {
+                expect((await store.getPage('plain-1'))?.role ?? null).toBeNull();
+                expect((await store.getPage('plain-2'))?.role ?? null).toBeNull();
+                expect(await code(roles().assign('plain-1', 'about'))).toBe('invalid_role');
+                expect(await code(roles().assign('missing', 'offer'))).toBe('not_found');
+            });
+
+            it('clears a role', async () => {
+                await roles().assign('oferta-v2', null);
+                expect((await store.listPagesWithRole()).map(p => p.slug)).toEqual(['privacy']);
+            });
+
+            it('refuses two holders of one role at the storage level', async () => {
+                await store.assignRole('plain-1', 'returns');
+                await expect(store.createPage(page('dup-returns', { role: 'returns' }))).rejects.toThrow();
+            });
         });
 
         describe('addressing', () => {

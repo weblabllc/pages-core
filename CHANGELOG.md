@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0 — 2026-09-23
+
+- Page roles: `ContentModel({ roles })`, `DEFAULT_PAGE_ROLES` (`offer`, `privacy`, `returns`), `PageRoles.assign()` moves a role to its new page, `PageRoles.links()` and `roleLinks()` build links for published holders.
+- Stores: `ensureSchema({ roles: true })` adds a `role` column with a unique `(tenant, role)` index (partial in Postgres and MongoDB); `assignRole()` and `listPagesWithRole()` on all three adapters, covered by the contract suite.
+- `ContentError` gains the `invalid_role` code (400).
+
 ## 0.3.0 — 2026-09-23
 
 - Content blocks: `image` and `document` carry a `url` (a relative `/assets/...` path or an `http(s)` URL; anything else, including protocol-relative `//host`, becomes an empty string), `contact-form` and `manuscript-form` mark where a page renders its forms.

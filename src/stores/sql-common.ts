@@ -24,6 +24,7 @@ export function pageToRow(r: StoredPage): Record<string, unknown> {
     const placement: Record<string, unknown> = {};
     if (r.folderId !== undefined) placement.folder_id = r.folderId;
     if (r.segment !== undefined) placement.segment = r.segment;
+    if (r.role !== undefined) placement.role = r.role;
     return {
         ...placement,
         slug: r.slug,
@@ -78,6 +79,7 @@ export function rowToPage(row: Record<string, unknown>): StoredPage {
         publishedAt: asDate(row.published_at),
         ...('folder_id' in row ? { folderId: (row.folder_id as string | null) ?? null } : {}),
         ...('segment' in row ? { segment: (row.segment as string | null) ?? null } : {}),
+        ...('role' in row ? { role: (row.role as string | null) ?? null } : {}),
         createdAt: asDate(row.created_at) ?? undefined,
         updatedAt: asDate(row.updated_at) ?? undefined,
     };

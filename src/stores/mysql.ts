@@ -58,7 +58,7 @@ export class MysqlPageStore implements PageStore {
     }
 
     async ensureSchema(features: SchemaFeatures = {}): Promise<void> {
-        const { pages = true, authors = false, categories = false, folders = false } = features;
+        const { pages = true, authors = false, categories = false, folders = false, roles = false } = features;
         if (pages) {
             await this.exec(`CREATE TABLE IF NOT EXISTS ${this.t.pages} (
                 slug varchar(255) NOT NULL,
@@ -102,6 +102,16 @@ export class MysqlPageStore implements PageStore {
                 enabled tinyint(1) NOT NULL DEFAULT 1,
                 PRIMARY KEY (tenant, kind, slug)
             )`);
+        }
+        if (roles) {
+            const existing = await this.rows(
+                `SELECT column_name AS c FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ?`,
+                [this.t.pages],
+            );
+            const have = new Set(existing.map(r => String(r.c ?? r.COLUMN_NAME).toLowerCase()));
+            if (!have.has('role')) {
+                await this.exec(`ALTER TABLE ${this.t.pages} ADD COLUMN role varchar(32) NULL, ADD UNIQUE KEY role_idx (tenant, role)`);
+            }
         }
         if (folders) {
             const existing = await this.rows(
@@ -310,6 +320,26 @@ export class MysqlPageStore implements PageStore {
              ON DUPLICATE KEY UPDATE current_slug = VALUES(current_slug)`,
             [from, tenant, to],
         );
+    }
+
+    async assignRole(slug: string, role: string | null, tenant = ''): Promise<{ released: string | null }> {
+        let released: string | null = null;
+        if (role) {
+            const holders = await this.rows(`SELECT slug FROM ${this.t.pages} WHERE tenant = ? AND role = ? AND slug <> ?`, [
+                tenant,
+                role,
+                slug,
+            ]);
+            released = holders[0] ? String(holders[0].slug) : null;
+            await this.exec(`UPDATE ${this.t.pages} SET role = NULL WHERE tenant = ? AND role = ? AND slug <> ?`, [tenant, role, slug]);
+        }
+        await this.exec(`UPDATE ${this.t.pages} SET role = ? WHERE tenant = ? AND slug = ?`, [role, tenant, slug]);
+        return { released };
+    }
+
+    async listPagesWithRole(tenant = ''): Promise<StoredPage[]> {
+        const rows = await this.rows(`SELECT * FROM ${this.t.pages} WHERE tenant = ? AND role IS NOT NULL ORDER BY role`, [tenant]);
+        return rows.map(rowToPage);
     }
 
     async resolveFormerSlug(slug: string, tenant = ''): Promise<string | null> {
