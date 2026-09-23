@@ -35,7 +35,7 @@ export function sanitizeMlt(
     for (const [lang, text] of Object.entries(raw as Record<string, unknown>)) {
         if (!langs.includes(lang)) return { error: `Unknown MLT language key: ${lang}` };
         if (typeof text !== 'string') return { error: `MLT value for "${lang}" must be a string` };
-        const value = text.replace(/\u0000/g, '').trim();
+        const value = text.split('\u0000').join('').trim();
         if (value.length > maxLen) return { error: `MLT value for "${lang}" exceeds ${maxLen} chars` };
         cleaned[lang] = value;
     }
