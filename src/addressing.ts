@@ -34,7 +34,9 @@ export type ContentErrorCode =
     | 'folder_cycle'
     | 'folder_not_empty'
     | 'invalid_import'
-    | 'invalid_role';
+    | 'invalid_role'
+    | 'invalid_comment'
+    | 'comments_disabled';
 
 const STATUS_BY_CODE: Record<ContentErrorCode, number> = {
     not_found: 404,
@@ -45,6 +47,8 @@ const STATUS_BY_CODE: Record<ContentErrorCode, number> = {
     folder_not_empty: 409,
     invalid_import: 400,
     invalid_role: 400,
+    invalid_comment: 400,
+    comments_disabled: 403,
 };
 
 export class ContentError extends Error {

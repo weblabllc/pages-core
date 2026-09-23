@@ -11,6 +11,7 @@ import {
     StoredPage,
 } from '../store.js';
 import { StoredFolder } from '../addressing.js';
+import { CommentListQuery, CommentStatus, StoredComment } from '../comments.js';
 
 interface MongoCollection {
     createIndex(spec: Record<string, unknown>, options?: Record<string, unknown>): Promise<unknown>;
@@ -39,6 +40,15 @@ interface MongoDb {
 interface MongoClientLike {
     db(name?: string): MongoDb;
     close(): Promise<void>;
+}
+
+function docToComment(doc: Record<string, unknown>): StoredComment {
+    const { _id, ...rest } = doc;
+    return {
+        ...(rest as unknown as StoredComment),
+        moderatedAt: rest.moderatedAt ? new Date(rest.moderatedAt as string | Date) : null,
+        createdAt: new Date(rest.createdAt as string | Date),
+    };
 }
 
 function docToPage(doc: Record<string, unknown>): StoredPage {
@@ -89,8 +99,12 @@ export class MongoPageStore implements PageStore {
         return this.db.collection(`${this.prefix}page_slug_history`);
     }
 
+    private comments(): MongoCollection {
+        return this.db.collection(`${this.prefix}page_comments`);
+    }
+
     async ensureSchema(features: SchemaFeatures = {}): Promise<void> {
-        const { pages = true, authors = false, categories = false, folders = false, roles = false } = features;
+        const { pages = true, authors = false, categories = false, folders = false, roles = false, comments = false } = features;
         if (pages) {
             await this.pages().createIndex({ tenant: 1, slug: 1 }, { unique: true });
             await this.pages().createIndex({ tenant: 1, type: 1, status: 1, publishedAt: -1 });
@@ -100,6 +114,11 @@ export class MongoPageStore implements PageStore {
         }
         if (categories) {
             await this.categories().createIndex({ tenant: 1, kind: 1, slug: 1 }, { unique: true });
+        }
+        if (comments) {
+            await this.comments().createIndex({ tenant: 1, id: 1 }, { unique: true });
+            await this.comments().createIndex({ tenant: 1, pageSlug: 1, status: 1, createdAt: -1 });
+            await this.comments().createIndex({ tenant: 1, status: 1, createdAt: -1 });
         }
         if (roles) {
             await this.pages().createIndex(
@@ -264,6 +283,7 @@ export class MongoPageStore implements PageStore {
             { $set: { tenant, slug: from, currentSlug: to, createdAt: new Date() } },
             { upsert: true },
         );
+        await this.comments().updateMany({ tenant, pageSlug: from }, { $set: { pageSlug: to } });
     }
 
     async findPageByRole(role: string, tenant = ''): Promise<StoredPage | null> {
@@ -287,5 +307,49 @@ export class MongoPageStore implements PageStore {
 
     async releaseFormerSlug(slug: string, tenant = ''): Promise<void> {
         await this.slugHistory().deleteOne({ tenant, slug });
+    }
+
+    async createComment(comment: StoredComment): Promise<StoredComment> {
+        await this.comments().insertOne({ ...comment, tenant: comment.tenant ?? '' });
+        return (await this.getComment(comment.id, comment.tenant))!;
+    }
+
+    async getComment(id: string, tenant = ''): Promise<StoredComment | null> {
+        const doc = await this.comments().findOne({ tenant, id });
+        return doc ? docToComment(doc) : null;
+    }
+
+    async listComments(query: CommentListQuery = {}) {
+        const page = clampPage(query.page);
+        const pageSize = query.pageSize && query.pageSize > 0 ? query.pageSize : 25;
+        const filter: Record<string, unknown> = { tenant: query.tenant ?? '' };
+        if (query.pageSlug) filter.pageSlug = query.pageSlug;
+        if (query.status) filter.status = query.status;
+        const total = await this.comments().countDocuments(filter);
+        const docs = await this.comments()
+            .find(filter)
+            .sort({ createdAt: -1, id: -1 })
+            .skip(pageOffset(page, pageSize))
+            .limit(pageSize)
+            .toArray();
+        return { rows: docs.map(docToComment), pagination: paginationMeta(total, page, pageSize) };
+    }
+
+    async setCommentStatus(id: string, status: CommentStatus, moderatedBy: string | null, tenant = ''): Promise<StoredComment | null> {
+        await this.comments().updateOne({ tenant, id }, { $set: { status, moderatedBy, moderatedAt: new Date() } });
+        return this.getComment(id, tenant);
+    }
+
+    async deleteComment(id: string, tenant = ''): Promise<boolean> {
+        const res = await this.comments().deleteOne({ tenant, id });
+        return res.deletedCount > 0;
+    }
+
+    async listApprovedRatings(pageSlugs: readonly string[], tenant = ''): Promise<Array<{ pageSlug: string; rating: number }>> {
+        if (!pageSlugs.length) return [];
+        const docs = await this.comments()
+            .find({ tenant, pageSlug: { $in: [...pageSlugs] }, status: 'approved', rating: { $type: 'number' } })
+            .toArray();
+        return docs.map(d => ({ pageSlug: String(d.pageSlug), rating: Number(d.rating) }));
     }
 }

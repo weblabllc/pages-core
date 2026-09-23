@@ -11,19 +11,26 @@ import {
     StoredPage,
 } from '../store.js';
 import { StoredFolder } from '../addressing.js';
+import { CommentListQuery, CommentStatus, StoredComment } from '../comments.js';
 import {
     authorToRow,
     categoryToRow,
+    commentToRow,
     folderToRow,
     pageToRow,
     patchToColumns,
     rowToAuthor,
     rowToCategory,
+    rowToComment,
     rowToFolder,
     rowToPage,
     TableNames,
     tableNames,
 } from './sql-common.js';
+
+const ignoreMissingTable = (error: { code?: string }) => {
+    if (error.code !== '42P01') throw error;
+};
 
 interface PgPool {
     query(sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>>; rowCount: number | null }>;
@@ -48,7 +55,7 @@ export class PgPageStore implements PageStore {
     }
 
     async ensureSchema(features: SchemaFeatures = {}): Promise<void> {
-        const { pages = true, authors = false, categories = false, folders = false, roles = false } = features;
+        const { pages = true, authors = false, categories = false, folders = false, roles = false, comments = false } = features;
         if (pages) {
             await this.pool.query(`CREATE TABLE IF NOT EXISTS ${this.t.pages} (
                 slug varchar(255) NOT NULL,
@@ -74,6 +81,31 @@ export class PgPageStore implements PageStore {
             );
             await this.pool.query(`ALTER TABLE ${this.t.pages} ADD COLUMN IF NOT EXISTS seo_title jsonb`);
             await this.pool.query(`ALTER TABLE ${this.t.pages} ADD COLUMN IF NOT EXISTS seo_description jsonb`);
+            await this.pool.query(`ALTER TABLE ${this.t.pages} ADD COLUMN IF NOT EXISTS created_by varchar(64)`);
+        }
+        if (comments) {
+            await this.pool.query(`CREATE TABLE IF NOT EXISTS ${this.t.comments} (
+                id varchar(36) NOT NULL,
+                tenant varchar(64) NOT NULL DEFAULT '',
+                page_slug varchar(255) NOT NULL,
+                user_id varchar(64),
+                author_name varchar(120) NOT NULL,
+                author_email varchar(255),
+                content text NOT NULL,
+                rating smallint,
+                status varchar(16) NOT NULL DEFAULT 'pending',
+                moderated_by varchar(64),
+                moderated_at timestamptz,
+                ip varchar(64),
+                created_at timestamptz NOT NULL DEFAULT now(),
+                PRIMARY KEY (tenant, id)
+            )`);
+            await this.pool.query(
+                `CREATE INDEX IF NOT EXISTS ${this.t.comments}_page_idx ON ${this.t.comments} (tenant, page_slug, status, created_at DESC)`,
+            );
+            await this.pool.query(
+                `CREATE INDEX IF NOT EXISTS ${this.t.comments}_queue_idx ON ${this.t.comments} (tenant, status, created_at DESC)`,
+            );
         }
         if (authors) {
             await this.pool.query(`CREATE TABLE IF NOT EXISTS ${this.t.authors} (
@@ -330,6 +362,9 @@ export class PgPageStore implements PageStore {
              ON CONFLICT (tenant, slug) DO UPDATE SET current_slug = $3`,
             [from, tenant, to],
         );
+        await this.pool
+            .query(`UPDATE ${this.t.comments} SET page_slug = $3 WHERE tenant = $1 AND page_slug = $2`, [tenant, from, to])
+            .catch(ignoreMissingTable);
     }
 
     async findPageByRole(role: string, tenant = ''): Promise<StoredPage | null> {
@@ -362,5 +397,66 @@ export class PgPageStore implements PageStore {
 
     async releaseFormerSlug(slug: string, tenant = ''): Promise<void> {
         await this.pool.query(`DELETE FROM ${this.t.slugHistory} WHERE tenant = $1 AND slug = $2`, [tenant, slug]);
+    }
+
+    async createComment(comment: StoredComment): Promise<StoredComment> {
+        const row = commentToRow(comment);
+        const cols = Object.keys(row);
+        await this.pool.query(
+            `INSERT INTO ${this.t.comments} (${cols.join(', ')}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(', ')})`,
+            Object.values(row),
+        );
+        return (await this.getComment(comment.id, comment.tenant))!;
+    }
+
+    async getComment(id: string, tenant = ''): Promise<StoredComment | null> {
+        const { rows } = await this.pool.query(`SELECT * FROM ${this.t.comments} WHERE tenant = $1 AND id = $2`, [tenant, id]);
+        return rows[0] ? rowToComment(rows[0]) : null;
+    }
+
+    async listComments(query: CommentListQuery = {}) {
+        const page = clampPage(query.page);
+        const pageSize = query.pageSize && query.pageSize > 0 ? query.pageSize : 25;
+        const params: unknown[] = [query.tenant ?? ''];
+        const where = ['tenant = $1'];
+        if (query.pageSlug) {
+            params.push(query.pageSlug);
+            where.push(`page_slug = $${params.length}`);
+        }
+        if (query.status) {
+            params.push(query.status);
+            where.push(`status = $${params.length}`);
+        }
+        const clause = where.join(' AND ');
+        const { rows: countRows } = await this.pool.query(`SELECT count(*)::int AS n FROM ${this.t.comments} WHERE ${clause}`, params);
+        const { rows } = await this.pool.query(
+            `SELECT * FROM ${this.t.comments} WHERE ${clause} ORDER BY created_at DESC, id DESC
+             LIMIT ${pageSize} OFFSET ${pageOffset(page, pageSize)}`,
+            params,
+        );
+        return { rows: rows.map(rowToComment), pagination: paginationMeta(Number(countRows[0].n), page, pageSize) };
+    }
+
+    async setCommentStatus(id: string, status: CommentStatus, moderatedBy: string | null, tenant = ''): Promise<StoredComment | null> {
+        await this.pool.query(
+            `UPDATE ${this.t.comments} SET status = $3, moderated_by = $4, moderated_at = now() WHERE tenant = $1 AND id = $2`,
+            [tenant, id, status, moderatedBy],
+        );
+        return this.getComment(id, tenant);
+    }
+
+    async deleteComment(id: string, tenant = ''): Promise<boolean> {
+        const res = await this.pool.query(`DELETE FROM ${this.t.comments} WHERE tenant = $1 AND id = $2`, [tenant, id]);
+        return (res.rowCount ?? 0) > 0;
+    }
+
+    async listApprovedRatings(pageSlugs: readonly string[], tenant = ''): Promise<Array<{ pageSlug: string; rating: number }>> {
+        if (!pageSlugs.length) return [];
+        const { rows } = await this.pool.query(
+            `SELECT page_slug, rating FROM ${this.t.comments}
+             WHERE tenant = $1 AND page_slug = ANY($2::varchar[]) AND status = 'approved' AND rating IS NOT NULL`,
+            [tenant, [...pageSlugs]],
+        );
+        return rows.map(r => ({ pageSlug: String(r.page_slug), rating: Number(r.rating) }));
     }
 }

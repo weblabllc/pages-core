@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ContentError, ContentModel, createPageStore, DEFAULT_PAGE_ROLES, fullBlogModel, PAGE_KIND, PageAddressing, PageRoles, PageStore, PageStoreOptions, StoredPage } from '../../src/index.js';
+import { ContentError, ContentModel, createPageStore, DEFAULT_PAGE_ROLES, fullBlogModel, PAGE_KIND, PageAddressing, PageComments, PageRoles, PageStore, PageStoreOptions, StoredPage } from '../../src/index.js';
 
 const targets: Array<[string, PageStoreOptions | null]> = [
     ['postgres', process.env.PAGES_PG_URL ? { driver: 'postgres', url: process.env.PAGES_PG_URL } : null],
@@ -44,8 +44,8 @@ for (const [name, options] of targets) {
             store = await createPageStore({ ...options!, tablePrefix: prefix });
             await store.ensureSchema({ pages: true, authors: true, categories: true });
             await store.createPage(page('legacy'));
-            await store.ensureSchema({ pages: true, authors: true, categories: true, folders: true, roles: true });
-            await store.ensureSchema({ pages: true, authors: true, categories: true, folders: true, roles: true });
+            await store.ensureSchema({ pages: true, authors: true, categories: true, folders: true, roles: true, comments: true });
+            await store.ensureSchema({ pages: true, authors: true, categories: true, folders: true, roles: true, comments: true });
         });
 
         afterAll(async () => {
@@ -109,6 +109,56 @@ for (const [name, options] of targets) {
             await store.upsertCategory({ slug: 'tips', tenant: '', kind: 'blog', name: { en: 'Tips' }, sortOrder: 1, enabled: true });
             expect((await store.listCategories('blog')).map(c => c.slug)).toEqual(['tips', 'news']);
             expect(await store.deleteCategory('blog', 'tips')).toBe(true);
+        });
+
+        it('remembers who created a page', async () => {
+            await store.createPage(page('authored', { createdBy: 'admin-7' }));
+            expect((await store.getPage('authored'))?.createdBy).toBe('admin-7');
+        });
+
+        describe('comments', () => {
+            const comments = () => new PageComments(store, fullBlogModel({ folders: true }));
+
+            beforeAll(async () => {
+                await store.createPage(page('post-with-comments', { type: 'blog', status: 'published' }));
+                await store.createPage(page('post-draft', { type: 'blog', status: 'draft' }));
+                await store.createPage(page('plain-page', { type: 'page', status: 'published' }));
+            });
+
+            it('accepts comments on published posts as pending and refuses others', async () => {
+                const first = await comments().submit('post-with-comments', { authorName: 'Іван', content: 'Перший', rating: 5 }, { ip: '203.0.113.1' });
+                expect(first).toMatchObject({ status: 'pending', pageSlug: 'post-with-comments', rating: 5, ip: '203.0.113.1', moderatedBy: null });
+                expect(await code(comments().submit('post-draft', { authorName: 'A', content: 'x' }))).toBe('not_found');
+                expect(await code(comments().submit('plain-page', { authorName: 'A', content: 'x' }))).toBe('comments_disabled');
+                expect(await code(comments().submit('post-with-comments', { authorName: '', content: 'x' }))).toBe('invalid_comment');
+            });
+
+            it('moderates, lists approved newest first and aggregates ratings', async () => {
+                const second = await comments().submit('post-with-comments', { authorName: 'Олена', content: 'Другий', rating: 4 });
+                const third = await comments().submit('post-with-comments', { authorName: 'Спам', content: 'Купи' });
+                const queue = await comments().queue({ status: 'pending' });
+                expect(queue.rows.length).toBe(3);
+                for (const c of queue.rows.filter(r => r.authorName !== 'Спам')) {
+                    const approved = await comments().moderate(c.id, 'approved', 'moderator-1');
+                    expect(approved).toMatchObject({ status: 'approved', moderatedBy: 'moderator-1' });
+                    expect(approved.moderatedAt).toBeInstanceOf(Date);
+                }
+                await comments().moderate(third.id, 'rejected', 'moderator-1');
+                const visible = await comments().approved('post-with-comments');
+                expect(visible.rows.map(c => c.authorName)).toEqual(['Олена', 'Іван']);
+                expect(Object.keys(visible.rows[0]).sort()).toEqual(['authorName', 'content', 'createdAt', 'id', 'rating']);
+                expect(await comments().ratings(['post-with-comments', 'post-draft'])).toEqual({ 'post-with-comments': { avg: 4.5, count: 2 } });
+                expect(second.id < third.id).toBe(true);
+                await comments().remove(third.id);
+                expect(await code(comments().remove(third.id))).toBe('not_found');
+                expect(await code(comments().moderate('missing', 'approved', null))).toBe('not_found');
+            });
+
+            it('follows the page when it is renamed', async () => {
+                await store.renamePage('post-with-comments', 'post-renamed');
+                expect((await comments().approved('post-renamed')).rows).toHaveLength(2);
+                expect((await comments().approved('post-with-comments')).rows).toHaveLength(0);
+            });
         });
 
         describe('page roles', () => {

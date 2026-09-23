@@ -1,5 +1,6 @@
 import { StoredFolder } from '../addressing.js';
 import { StoredAuthor, StoredCategory, StoredPage } from '../store.js';
+import { StoredComment } from '../comments.js';
 
 export interface TableNames {
     pages: string;
@@ -7,6 +8,7 @@ export interface TableNames {
     categories: string;
     folders: string;
     slugHistory: string;
+    comments: string;
 }
 
 export function tableNames(prefix: string): TableNames {
@@ -17,6 +19,7 @@ export function tableNames(prefix: string): TableNames {
         categories: `${p}categories`,
         folders: `${p}page_folders`,
         slugHistory: `${p}page_slug_history`,
+        comments: `${p}page_comments`,
     };
 }
 
@@ -25,6 +28,7 @@ export function pageToRow(r: StoredPage): Record<string, unknown> {
     if (r.folderId !== undefined) placement.folder_id = r.folderId;
     if (r.segment !== undefined) placement.segment = r.segment;
     if (r.role !== undefined) placement.role = r.role;
+    if (r.createdBy !== undefined) placement.created_by = r.createdBy;
     if (r.seoTitle !== undefined) placement.seo_title = r.seoTitle === null ? null : JSON.stringify(r.seoTitle);
     if (r.seoDescription !== undefined) placement.seo_description = r.seoDescription === null ? null : JSON.stringify(r.seoDescription);
     return {
@@ -82,6 +86,7 @@ export function rowToPage(row: Record<string, unknown>): StoredPage {
         ...('folder_id' in row ? { folderId: (row.folder_id as string | null) ?? null } : {}),
         ...('segment' in row ? { segment: (row.segment as string | null) ?? null } : {}),
         ...('role' in row ? { role: (row.role as string | null) ?? null } : {}),
+        ...('created_by' in row ? { createdBy: (row.created_by as string | null) ?? null } : {}),
         ...('seo_title' in row ? { seoTitle: parseJson(row.seo_title) as StoredPage['seoTitle'] } : {}),
         ...('seo_description' in row ? { seoDescription: parseJson(row.seo_description) as StoredPage['seoDescription'] } : {}),
         createdAt: asDate(row.created_at) ?? undefined,
@@ -184,5 +189,41 @@ export function rowToFolder(row: Record<string, unknown>): StoredFolder {
         nameMlt: parseJson(row.name_mlt) as StoredFolder['nameMlt'],
         segment: String(row.segment),
         sortOrder: Number(row.sort_order ?? 0),
+    };
+}
+
+export function commentToRow(c: StoredComment): Record<string, unknown> {
+    return {
+        id: c.id,
+        tenant: c.tenant ?? '',
+        page_slug: c.pageSlug,
+        user_id: c.userId,
+        author_name: c.authorName,
+        author_email: c.authorEmail,
+        content: c.content,
+        rating: c.rating,
+        status: c.status,
+        moderated_by: c.moderatedBy,
+        moderated_at: c.moderatedAt,
+        ip: c.ip,
+        created_at: c.createdAt,
+    };
+}
+
+export function rowToComment(row: Record<string, unknown>): StoredComment {
+    return {
+        id: String(row.id),
+        tenant: String(row.tenant ?? ''),
+        pageSlug: String(row.page_slug),
+        userId: (row.user_id as string | null) ?? null,
+        authorName: String(row.author_name),
+        authorEmail: (row.author_email as string | null) ?? null,
+        content: String(row.content),
+        rating: row.rating === null || row.rating === undefined ? null : Number(row.rating),
+        status: row.status as StoredComment['status'],
+        moderatedBy: (row.moderated_by as string | null) ?? null,
+        moderatedAt: asDate(row.moderated_at),
+        ip: (row.ip as string | null) ?? null,
+        createdAt: asDate(row.created_at) ?? new Date(0),
     };
 }

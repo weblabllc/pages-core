@@ -141,7 +141,37 @@ The rules:
 
 All role rules live in `PageRoles`: stores only find a page by role and write a role, so every adapter behaves the same.
 
+## Comments
 
+Comments are a feature of a content kind: `BLOG_KIND` has them, any custom kind can turn them on with `comments: true`. They are anonymous, always pre-moderated, and may carry a 1–5 rating.
+
+```ts
+import { fullBlogModel, PageComments } from '@weblabllc/pages-core'
+
+const model = fullBlogModel()
+await store.ensureSchema(model.schemaFeatures())          // creates the comments table
+const comments = new PageComments(store, model, tenant)
+
+await comments.submit('first-post', body, { userId, ip })  // pending; throws invalid_comment, comments_disabled or not_found
+await comments.queue({ status: 'pending' })                // moderation queue, newest first
+await comments.moderate(id, 'approved', moderatorId)       // or 'rejected'
+await comments.approved('first-post', { page: 1 })         // public fields only: id, authorName, content, rating, createdAt
+await comments.ratings(['first-post'])                     // { 'first-post': { avg: 4.5, count: 2 } }
+```
+
+What the package checks:
+
+- the page exists, is published and its kind has comments;
+- `authorName` 1–120 characters, `content` 1–4000, optional `authorEmail` up to 255 and in a valid format, optional `rating` an integer 1–5;
+- control characters are stripped, tabs and line breaks are kept.
+
+Captcha and rate limiting stay in your app: they depend on your transport and infrastructure. When a page is renamed, its comments move with it.
+
+## Authorship
+
+Every page may carry `createdBy`: the id of the user who created it. The package stores it and never changes it.
+
+## Export / import
 
 ```ts
 import { exportPortablePage, validatePortablePage } from '@weblabllc/pages-core'

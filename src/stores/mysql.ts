@@ -11,14 +11,17 @@ import {
     StoredPage,
 } from '../store.js';
 import { StoredFolder } from '../addressing.js';
+import { CommentListQuery, CommentStatus, StoredComment } from '../comments.js';
 import {
     authorToRow,
     categoryToRow,
+    commentToRow,
     folderToRow,
     pageToRow,
     patchToColumns,
     rowToAuthor,
     rowToCategory,
+    rowToComment,
     rowToFolder,
     rowToPage,
     TableNames,
@@ -58,7 +61,7 @@ export class MysqlPageStore implements PageStore {
     }
 
     async ensureSchema(features: SchemaFeatures = {}): Promise<void> {
-        const { pages = true, authors = false, categories = false, folders = false, roles = false } = features;
+        const { pages = true, authors = false, categories = false, folders = false, roles = false, comments = false } = features;
         if (pages) {
             await this.exec(`CREATE TABLE IF NOT EXISTS ${this.t.pages} (
                 slug varchar(255) NOT NULL,
@@ -111,6 +114,27 @@ export class MysqlPageStore implements PageStore {
             const have = new Set(existing.map(r => String(r.c ?? r.COLUMN_NAME).toLowerCase()));
             if (!have.has('seo_title')) await this.exec(`ALTER TABLE ${this.t.pages} ADD COLUMN seo_title json NULL`);
             if (!have.has('seo_description')) await this.exec(`ALTER TABLE ${this.t.pages} ADD COLUMN seo_description json NULL`);
+            if (!have.has('created_by')) await this.exec(`ALTER TABLE ${this.t.pages} ADD COLUMN created_by varchar(64) NULL`);
+        }
+        if (comments) {
+            await this.exec(`CREATE TABLE IF NOT EXISTS ${this.t.comments} (
+                id varchar(36) NOT NULL,
+                tenant varchar(64) NOT NULL DEFAULT '',
+                page_slug varchar(255) NOT NULL,
+                user_id varchar(64) NULL,
+                author_name varchar(120) NOT NULL,
+                author_email varchar(255) NULL,
+                content text NOT NULL,
+                rating smallint NULL,
+                status varchar(16) NOT NULL DEFAULT 'pending',
+                moderated_by varchar(64) NULL,
+                moderated_at datetime NULL,
+                ip varchar(64) NULL,
+                created_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+                PRIMARY KEY (tenant, id),
+                KEY page_idx (tenant, page_slug, status, created_at),
+                KEY queue_idx (tenant, status, created_at)
+            )`);
         }
         if (roles) {
             const existing = await this.rows(
@@ -329,6 +353,11 @@ export class MysqlPageStore implements PageStore {
              ON DUPLICATE KEY UPDATE current_slug = VALUES(current_slug)`,
             [from, tenant, to],
         );
+        await this.exec(`UPDATE ${this.t.comments} SET page_slug = ? WHERE tenant = ? AND page_slug = ?`, [to, tenant, from]).catch(
+            (error: { code?: string }) => {
+                if (error.code !== 'ER_NO_SUCH_TABLE') throw error;
+            },
+        );
     }
 
     async findPageByRole(role: string, tenant = ''): Promise<StoredPage | null> {
@@ -355,5 +384,66 @@ export class MysqlPageStore implements PageStore {
 
     async releaseFormerSlug(slug: string, tenant = ''): Promise<void> {
         await this.exec(`DELETE FROM ${this.t.slugHistory} WHERE tenant = ? AND slug = ?`, [tenant, slug]);
+    }
+
+    async createComment(comment: StoredComment): Promise<StoredComment> {
+        const row = commentToRow(comment);
+        const cols = Object.keys(row);
+        await this.exec(
+            `INSERT INTO ${this.t.comments} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
+            Object.values(row),
+        );
+        return (await this.getComment(comment.id, comment.tenant))!;
+    }
+
+    async getComment(id: string, tenant = ''): Promise<StoredComment | null> {
+        const rows = await this.rows(`SELECT * FROM ${this.t.comments} WHERE tenant = ? AND id = ?`, [tenant, id]);
+        return rows[0] ? rowToComment(rows[0]) : null;
+    }
+
+    async listComments(query: CommentListQuery = {}) {
+        const page = clampPage(query.page);
+        const pageSize = query.pageSize && query.pageSize > 0 ? query.pageSize : 25;
+        const params: unknown[] = [query.tenant ?? ''];
+        const where = ['tenant = ?'];
+        if (query.pageSlug) {
+            params.push(query.pageSlug);
+            where.push('page_slug = ?');
+        }
+        if (query.status) {
+            params.push(query.status);
+            where.push('status = ?');
+        }
+        const clause = where.join(' AND ');
+        const countRows = await this.rows(`SELECT count(*) AS n FROM ${this.t.comments} WHERE ${clause}`, params);
+        const rows = await this.rows(
+            `SELECT * FROM ${this.t.comments} WHERE ${clause} ORDER BY created_at DESC, id DESC
+             LIMIT ${pageSize} OFFSET ${pageOffset(page, pageSize)}`,
+            params,
+        );
+        return { rows: rows.map(rowToComment), pagination: paginationMeta(Number(countRows[0].n), page, pageSize) };
+    }
+
+    async setCommentStatus(id: string, status: CommentStatus, moderatedBy: string | null, tenant = ''): Promise<StoredComment | null> {
+        await this.exec(
+            `UPDATE ${this.t.comments} SET status = ?, moderated_by = ?, moderated_at = CURRENT_TIMESTAMP WHERE tenant = ? AND id = ?`,
+            [status, moderatedBy, tenant, id],
+        );
+        return this.getComment(id, tenant);
+    }
+
+    async deleteComment(id: string, tenant = ''): Promise<boolean> {
+        const res = await this.exec(`DELETE FROM ${this.t.comments} WHERE tenant = ? AND id = ?`, [tenant, id]);
+        return res.affectedRows > 0;
+    }
+
+    async listApprovedRatings(pageSlugs: readonly string[], tenant = ''): Promise<Array<{ pageSlug: string; rating: number }>> {
+        if (!pageSlugs.length) return [];
+        const rows = await this.rows(
+            `SELECT page_slug, rating FROM ${this.t.comments}
+             WHERE tenant = ? AND page_slug IN (${pageSlugs.map(() => '?').join(', ')}) AND status = 'approved' AND rating IS NOT NULL`,
+            [tenant, ...pageSlugs],
+        );
+        return rows.map(r => ({ pageSlug: String(r.page_slug), rating: Number(r.rating) }));
     }
 }

@@ -3,6 +3,7 @@ import { MultiLangText } from './mlt.js';
 import { AuthorRecord } from './authors.js';
 import { PageStatus, PageType } from './types.js';
 import { StoredFolder } from './addressing.js';
+import { CommentListQuery, CommentStatus, StoredComment } from './comments.js';
 
 export interface StoredPage {
     slug: string;
@@ -24,6 +25,7 @@ export interface StoredPage {
     role?: string | null;
     seoTitle?: MultiLangText | null;
     seoDescription?: MultiLangText | null;
+    createdBy?: string | null;
     createdAt?: Date;
     updatedAt?: Date;
 }
@@ -64,6 +66,7 @@ export interface SchemaFeatures {
     categories?: boolean;
     folders?: boolean;
     roles?: boolean;
+    comments?: boolean;
 }
 
 export interface PageStore {
@@ -97,6 +100,13 @@ export interface PageStore {
     findPageByRole(role: string, tenant?: string): Promise<StoredPage | null>;
     setRole(slug: string, role: string | null, tenant?: string): Promise<void>;
     listPagesWithRole(tenant?: string): Promise<StoredPage[]>;
+
+    createComment(comment: StoredComment): Promise<StoredComment>;
+    getComment(id: string, tenant?: string): Promise<StoredComment | null>;
+    listComments(query?: CommentListQuery): Promise<{ rows: StoredComment[]; pagination: PaginationMeta }>;
+    setCommentStatus(id: string, status: CommentStatus, moderatedBy: string | null, tenant?: string): Promise<StoredComment | null>;
+    deleteComment(id: string, tenant?: string): Promise<boolean>;
+    listApprovedRatings(pageSlugs: readonly string[], tenant?: string): Promise<Array<{ pageSlug: string; rating: number }>>;
 }
 
 export type PageStoreDriver = 'postgres' | 'mysql' | 'mongodb';

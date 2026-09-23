@@ -8,6 +8,7 @@ export interface KindConfig {
     categoryKind?: string;
     addressing?: AddressingMode;
     categoryInPath?: boolean;
+    comments?: boolean;
 }
 
 export interface ContentModelConfig {
@@ -36,6 +37,7 @@ export const BLOG_KIND: KindConfig = {
     readingTime: true,
     categoryKind: 'blog',
     addressing: 'flat',
+    comments: true,
 };
 
 export class ContentModel {
@@ -94,6 +96,10 @@ export class ContentModel {
         }
     }
 
+    usesComments(kind: string): boolean {
+        return this.hasKind(kind) && Boolean(this.kindConfig(kind).comments);
+    }
+
     usesFolders(): boolean {
         return Boolean(this.config.folders);
     }
@@ -116,6 +122,7 @@ export class ContentModel {
             categories: configs.some(c => c.taxonomy),
             folders: Boolean(this.config.folders),
             roles: this.usesRoles(),
+            comments: configs.some(c => c.comments),
         };
     }
 

@@ -15,3 +15,5 @@ export * from './portable.js';
 export * from './sitemap.js';
 export * from './page-addressing.js';
 export * from './page-roles.js';
+export * from './comments.js';
+export * from './page-comments.js';
