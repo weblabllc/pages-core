@@ -7,7 +7,7 @@ export const COMMENT_STATUSES: readonly CommentStatus[] = ['pending', 'approved'
 export interface StoredComment {
     id: string;
     tenant: string;
-    pageSlug: string;
+    pageId: string;
     userId: string | null;
     authorName: string;
     authorEmail: string | null;
@@ -27,13 +27,6 @@ export interface CommentInput {
     rating: number | null;
 }
 
-export interface CommentListQuery {
-    tenant?: string;
-    pageSlug?: string;
-    status?: CommentStatus;
-    page?: number;
-    pageSize?: number;
-}
 
 export interface RatingSummary {
     avg: number;

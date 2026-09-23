@@ -3,9 +3,10 @@ import { MultiLangText } from './mlt.js';
 import { AuthorRecord } from './authors.js';
 import { PageStatus, PageType } from './types.js';
 import { StoredFolder } from './addressing.js';
-import { CommentListQuery, CommentStatus, StoredComment } from './comments.js';
+import { CommentStatus, StoredComment } from './comments.js';
 
 export interface StoredPage {
+    id: string;
     slug: string;
     tenant: string;
     type: PageType;
@@ -50,21 +51,90 @@ export interface PageOrder {
     direction: 'asc' | 'desc';
 }
 
-export interface PageListQuery {
+export type PageProjection = 'full' | 'card' | 'index';
+
+export interface PageSearch {
+    term: string;
+    columns: ReadonlyArray<'title' | 'slug'>;
+    mlt: ReadonlyArray<'titleMlt' | 'annotation'>;
+    langs: readonly string[];
+}
+
+export interface PageFilter {
     tenant?: string;
-    type?: PageType;
+    types?: readonly PageType[];
     status?: PageStatus;
     category?: string;
+    hasCategory?: boolean;
     authorSlug?: string;
     pinned?: boolean;
-    search?: string;
-    page?: number;
-    pageSize?: number;
+    folderId?: string | null;
+    folderIds?: ReadonlyArray<string | null>;
+    ids?: readonly string[];
+    search?: PageSearch;
+}
+
+export interface PageListQuery extends PageFilter {
+    order: readonly PageOrder[];
+    page: number;
+    pageSize: number;
+    projection?: PageProjection;
 }
 
 export interface PageListResult {
     rows: StoredPage[];
     pagination: PaginationMeta;
+}
+
+export const PAGE_PATCH_FIELDS = [
+    'slug',
+    'status',
+    'title',
+    'titleMlt',
+    'annotation',
+    'data',
+    'category',
+    'pinned',
+    'authorSlug',
+    'coverImage',
+    'readingTime',
+    'publishedAt',
+    'folderId',
+    'segment',
+    'seoTitle',
+    'seoDescription',
+] as const;
+
+export type PagePatch = Partial<Pick<StoredPage, (typeof PAGE_PATCH_FIELDS)[number]>>;
+
+export type ConflictTarget = 'page_id' | 'page_slug' | 'page_role' | 'folder_sibling' | 'comment_id' | 'unknown';
+
+export class StoreConflictError extends Error {
+    constructor(
+        readonly target: ConflictTarget,
+        message: string,
+    ) {
+        super(message);
+        this.name = 'StoreConflictError';
+    }
+}
+
+export type CommentSortField = 'createdAt' | 'status' | 'rating' | 'id';
+
+export interface CommentOrder {
+    field: CommentSortField;
+    direction: 'asc' | 'desc';
+}
+
+export interface CommentListQuery {
+    tenant?: string;
+    pageId?: string;
+    status?: CommentStatus;
+    rating?: number;
+    search?: string;
+    order: readonly CommentOrder[];
+    page: number;
+    pageSize: number;
 }
 
 export interface SchemaFeatures {
@@ -80,41 +150,48 @@ export interface SchemaFeatures {
 export interface PageStore {
     ensureSchema(features?: SchemaFeatures): Promise<void>;
     close(): Promise<void>;
+    transaction<T>(fn: (tx: PageStore) => Promise<T>): Promise<T>;
 
-    getPage(slug: string, tenant?: string): Promise<StoredPage | null>;
+    getPageById(id: string, tenant?: string, projection?: PageProjection): Promise<StoredPage | null>;
+    getPageBySlug(slug: string, tenant?: string, projection?: PageProjection): Promise<StoredPage | null>;
+    getPagesByIds(ids: readonly string[], tenant?: string, projection?: PageProjection): Promise<StoredPage[]>;
     createPage(record: StoredPage): Promise<StoredPage>;
-    updatePage(slug: string, patch: Partial<StoredPage>, tenant?: string): Promise<StoredPage | null>;
-    deletePage(slug: string, tenant?: string): Promise<boolean>;
-    listPages(query?: PageListQuery): Promise<PageListResult>;
+    updatePage(id: string, patch: PagePatch, tenant?: string): Promise<StoredPage | null>;
+    deletePage(id: string, tenant?: string): Promise<boolean>;
+    listPages(query: PageListQuery): Promise<PageListResult>;
+    countPages(filter: PageFilter): Promise<number>;
 
     upsertAuthor(author: StoredAuthor): Promise<StoredAuthor>;
     getAuthor(slug: string, tenant?: string): Promise<StoredAuthor | null>;
+    getAuthorsBySlugs(slugs: readonly string[], tenant?: string): Promise<StoredAuthor[]>;
     listAuthors(options?: { tenant?: string; enabledOnly?: boolean }): Promise<StoredAuthor[]>;
     deleteAuthor(slug: string, tenant?: string): Promise<boolean>;
-    countPagesByAuthor(authorSlug: string, tenant?: string): Promise<number>;
 
     upsertCategory(category: StoredCategory): Promise<StoredCategory>;
+    getCategory(kind: string, slug: string, tenant?: string): Promise<StoredCategory | null>;
     listCategories(kind: string, options?: { tenant?: string; enabledOnly?: boolean }): Promise<StoredCategory[]>;
     deleteCategory(kind: string, slug: string, tenant?: string): Promise<boolean>;
 
     listFolders(tenant?: string): Promise<StoredFolder[]>;
     saveFolder(folder: StoredFolder): Promise<StoredFolder>;
     deleteFolder(id: string, tenant?: string): Promise<boolean>;
-    listPagesInFolders(folderIds: ReadonlyArray<string | null>, tenant?: string): Promise<StoredPage[]>;
-    renamePage(from: string, to: string, tenant?: string): Promise<void>;
+
+    recordFormerSlug(slug: string, pageId: string, tenant?: string): Promise<void>;
     resolveFormerSlug(slug: string, tenant?: string): Promise<string | null>;
     releaseFormerSlug(slug: string, tenant?: string): Promise<void>;
+    deleteSlugHistory(pageId: string, tenant?: string): Promise<void>;
 
     findPageByRole(role: string, tenant?: string): Promise<StoredPage | null>;
-    setRole(slug: string, role: string | null, tenant?: string): Promise<void>;
+    setRole(id: string, role: string | null, tenant?: string): Promise<void>;
     listPagesWithRole(tenant?: string): Promise<StoredPage[]>;
 
     createComment(comment: StoredComment): Promise<StoredComment>;
     getComment(id: string, tenant?: string): Promise<StoredComment | null>;
-    listComments(query?: CommentListQuery): Promise<{ rows: StoredComment[]; pagination: PaginationMeta }>;
+    listComments(query: CommentListQuery): Promise<{ rows: StoredComment[]; pagination: PaginationMeta }>;
     setCommentStatus(id: string, status: CommentStatus, moderatedBy: string | null, tenant?: string): Promise<StoredComment | null>;
     deleteComment(id: string, tenant?: string): Promise<boolean>;
-    listApprovedRatings(pageSlugs: readonly string[], tenant?: string): Promise<Array<{ pageSlug: string; rating: number }>>;
+    deleteCommentsByPage(pageId: string, tenant?: string): Promise<number>;
+    aggregateApprovedRatings(pageIds: readonly string[], tenant?: string): Promise<Array<{ pageId: string; count: number; sum: number }>>;
 }
 
 export type PageStoreDriver = 'postgres' | 'mysql' | 'mongodb';
@@ -125,6 +202,8 @@ export interface PageStoreOptions {
     client?: unknown;
     tablePrefix?: string;
     database?: string;
+    clientMode?: 'pool' | 'bound';
+    mongoTransactions?: 'auto' | 'require';
 }
 
 export async function loadOptionalModule(name: string, purpose: string): Promise<any> {
