@@ -180,7 +180,7 @@ List parameters come straight from a query string. Invalid values are ignored:
 
 Every order ends with the page id, so pages never repeat or go missing between pages of a list.
 
-`localizedView` keeps a page in one language. It uses the requested language if the page has a title in it; otherwise it uses the primary language for every field.
+`localizedView` shows a page in one language. The page is shown in the requested language if it has a title in that language, otherwise in the primary language. An empty field is filled from the primary language, then from any other language. This matches how Vendure translates entities.
 
 Only kinds registered in the model are ever returned.
 

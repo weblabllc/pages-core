@@ -42,7 +42,13 @@ export interface LocalizedPageView {
     data: unknown;
 }
 
-const pick = (text: MultiLangText | null | undefined, lang: string): string | null => (text && lang in text ? text[lang] : null);
+function pick(text: MultiLangText | null | undefined, chain: readonly string[]): string | null {
+    for (const lang of chain) {
+        const value = text?.[lang];
+        if (value) return value;
+    }
+    return null;
+}
 
 export class PageQueries {
     private addressing: PageAddressing;
@@ -93,12 +99,13 @@ export class PageQueries {
         const primary = this.model.primaryLang();
         const languageCode = page.titleMlt && lang in page.titleMlt ? lang : primary;
         const codec = this.model.hasKind(page.type) ? this.model.dataCodec(page.type) : null;
+        const chain = [...new Set([languageCode, primary, ...this.model.langs()])];
         return {
             languageCode,
-            title: page.titleMlt && languageCode in page.titleMlt ? page.titleMlt[languageCode] : page.title,
-            annotation: pick(page.annotation, languageCode),
-            seoTitle: pick(page.seoTitle, languageCode),
-            seoDescription: pick(page.seoDescription, languageCode),
+            title: pick(page.titleMlt, chain) ?? page.title,
+            annotation: pick(page.annotation, chain),
+            seoTitle: pick(page.seoTitle, chain),
+            seoDescription: pick(page.seoDescription, chain),
             data: codec?.localize ? codec.localize(page.data, languageCode, primary) : page.data,
         };
     }

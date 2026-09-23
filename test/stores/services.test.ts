@@ -138,8 +138,8 @@ for (const [name, options] of targets) {
                 const about = (await queries.getBySlug('about'))!;
                 expect(queries.localizedView(about, 'uk')).toMatchObject({ languageCode: 'uk', title: 'Про нас' });
                 expect(queries.localizedView(about, 'de')).toMatchObject({ languageCode: 'en', title: 'About' });
-                const blankEnglish = { ...about, titleMlt: { en: '', uk: 'Про нас' }, seoTitle: { uk: 'SEO' } };
-                expect(queries.localizedView(blankEnglish, 'en')).toMatchObject({ languageCode: 'en', title: '', seoTitle: null });
+                const blankEnglish = { ...about, titleMlt: { en: '', uk: 'Про нас' }, seoTitle: { uk: 'SEO' }, seoDescription: { en: '', uk: '' } };
+                expect(queries.localizedView(blankEnglish, 'en')).toMatchObject({ languageCode: 'en', title: 'Про нас', seoTitle: 'SEO', seoDescription: null });
             });
 
             it('settles ten parallel creates at one address with a single winner', async () => {
