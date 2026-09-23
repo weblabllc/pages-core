@@ -42,6 +42,8 @@ export interface ImportExpectation {
     langs: readonly string[];
 }
 
+export const PORTABLE_IMPORT_FIELDS: readonly string[] = ['data', 'title', 'titleMlt', 'annotation', 'seoTitle', 'seoDescription', 'category', 'authorSlug', 'coverImage'];
+
 export type PortableImport = Omit<Partial<PortablePage>, 'data'> & { data: PuckData };
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -69,6 +71,6 @@ export function validatePortablePage(body: unknown, expected: ImportExpectation)
         if (error) fail(error);
     }
 
-    const { slug: _slug, type: _type, ...rest } = input;
-    return { ...(rest as Omit<PortableImport, 'data'>), data: data as unknown as PuckData };
+    const content = Object.fromEntries(Object.entries(input).filter(([key]) => PORTABLE_IMPORT_FIELDS.includes(key)));
+    return content as PortableImport;
 }

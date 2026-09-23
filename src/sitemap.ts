@@ -16,7 +16,12 @@ export interface ContentSitemapOptions {
     includeAuthors?: boolean;
     categoryPath?: (slug: string) => string;
     authorPath?: (slug: string) => string;
+    sections?: ReadonlyArray<SitemapSection>;
 }
+
+export type SitemapSection = 'root' | 'categories' | 'pages' | 'authors';
+
+const DEFAULT_SECTIONS: readonly SitemapSection[] = ['root', 'categories', 'pages', 'authors'];
 
 const toIso = (value: Date | string | null | undefined): string | null =>
     value ? new Date(value).toISOString() : null;
@@ -36,21 +41,24 @@ export function contentSitemapEntries(pages: readonly SitemapSource[], options: 
     const categoryPath = options.categoryPath ?? (slug => `${base}/category/${slug}`);
     const authorPath = options.authorPath ?? (slug => `${base}/author/${slug}`);
 
-    const entries: SitemapEntry[] = [{ path: base || '/', lastmod: latest(pages.map(p => p.updatedAt)) }];
-    for (const category of options.categories ?? []) {
-        const inCategory = pages.filter(p => p.category === category);
-        entries.push({ path: categoryPath(category), lastmod: latest(inCategory.map(p => p.updatedAt)) });
-    }
-    for (const page of pages) {
-        entries.push({ path: `${base}/${page.slug}`, lastmod: toIso(page.updatedAt) });
-    }
-    if (options.includeAuthors) {
-        const authors = [...new Set(pages.map(p => p.authorSlug).filter((s): s is string => Boolean(s)))];
-        for (const author of authors) {
-            const byAuthor = pages.filter(p => p.authorSlug === author);
-            entries.push({ path: authorPath(author), lastmod: latest(byAuthor.map(p => p.updatedAt)) });
-        }
-    }
+    const build: Record<SitemapSection, () => SitemapEntry[]> = {
+        root: () => [{ path: base || '/', lastmod: latest(pages.map(p => p.updatedAt)) }],
+        categories: () =>
+            (options.categories ?? []).map(category => ({
+                path: categoryPath(category),
+                lastmod: latest(pages.filter(p => p.category === category).map(p => p.updatedAt)),
+            })),
+        pages: () => pages.map(page => ({ path: `${base}/${page.slug}`, lastmod: toIso(page.updatedAt) })),
+        authors: () => {
+            if (!options.includeAuthors) return [];
+            const authors = [...new Set(pages.map(p => p.authorSlug).filter((s): s is string => Boolean(s)))];
+            return authors.map(author => ({
+                path: authorPath(author),
+                lastmod: latest(pages.filter(p => p.authorSlug === author).map(p => p.updatedAt)),
+            }));
+        },
+    };
+    const entries = (options.sections ?? DEFAULT_SECTIONS).flatMap(section => build[section]());
     return entries;
 }
 

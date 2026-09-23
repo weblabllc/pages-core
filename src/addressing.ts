@@ -37,6 +37,7 @@ export type ContentErrorCode =
     | 'invalid_role'
     | 'invalid_comment'
     | 'invalid_page'
+    | 'type_immutable'
     | 'comments_disabled';
 
 const STATUS_BY_CODE: Record<ContentErrorCode, number> = {
@@ -50,6 +51,7 @@ const STATUS_BY_CODE: Record<ContentErrorCode, number> = {
     invalid_role: 400,
     invalid_comment: 400,
     invalid_page: 400,
+    type_immutable: 400,
     comments_disabled: 403,
 };
 

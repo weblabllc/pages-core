@@ -1,3 +1,4 @@
+import type { PublishPolicy } from './content-model.js';
 import { BlogFields, PageLifecycle, PageListEntry, PageType } from './types.js';
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -45,14 +46,15 @@ export function blogFieldsFor(type: PageType, fields: Partial<BlogFields>): Blog
     };
 }
 
-export function applyPublish<T extends PageLifecycle>(page: T, now: Date = new Date()): T {
+export function applyPublish<T extends PageLifecycle>(page: T, now: Date = new Date(), policy: PublishPolicy = 'first'): T {
     page.status = 'published';
-    page.publishedAt = page.publishedAt ?? now;
+    page.publishedAt = policy === 'latest' ? now : (page.publishedAt ?? now);
     return page;
 }
 
-export function applyUnpublish<T extends PageLifecycle>(page: T): T {
+export function applyUnpublish<T extends PageLifecycle>(page: T, policy: PublishPolicy = 'first'): T {
     page.status = 'draft';
+    if (policy === 'latest') page.publishedAt = null;
     return page;
 }
 
