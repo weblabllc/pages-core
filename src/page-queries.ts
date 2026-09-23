@@ -11,6 +11,10 @@ import { PageStatus } from './types.js';
 
 export const ADMIN_LISTING: KindListing = { order: [{ field: 'updatedAt', direction: 'desc' }], pageSize: 25 };
 
+export interface ListOptions {
+    projection?: Exclude<PageProjection, 'index'>;
+}
+
 export interface PageCard extends StoredPage {
     author?: StoredAuthor | null;
     rating?: RatingSummary | null;
@@ -38,7 +42,7 @@ export interface LocalizedPageView {
     data: unknown;
 }
 
-const pick = (text: MultiLangText | null | undefined, lang: string): string | null => text?.[lang] || null;
+const pick = (text: MultiLangText | null | undefined, lang: string): string | null => (text && lang in text ? text[lang] : null);
 
 export class PageQueries {
     private addressing: PageAddressing;
@@ -59,16 +63,16 @@ export class PageQueries {
         return this.registered(await this.store.getPageBySlug(slug, this.tenant));
     }
 
-    async adminList(raw: Record<string, unknown>): Promise<PageListing> {
+    async adminList(raw: Record<string, unknown>, options: ListOptions = {}): Promise<PageListing> {
         const kind = typeof raw.type === 'string' && this.model.hasKind(raw.type) ? raw.type : null;
         const parsed = parseListParams(raw, ADMIN_LISTING, this.model);
-        return this.store.listPages(this.query(parsed, kind ? [kind] : this.model.kinds(), parsed.filter.status, 'card'));
+        return this.store.listPages(this.query(parsed, kind ? [kind] : this.model.kinds(), parsed.filter.status, options.projection ?? 'card'));
     }
 
-    async list(kind: string, raw: Record<string, unknown>): Promise<PageListing<PageCard>> {
+    async list(kind: string, raw: Record<string, unknown>, options: ListOptions = {}): Promise<PageListing<PageCard>> {
         this.model.assertKind(kind);
         const parsed = parseListParams(raw, this.model.listing(kind), this.model);
-        const result = await this.store.listPages(this.query(parsed, [kind], 'published', 'card'));
+        const result = await this.store.listPages(this.query(parsed, [kind], 'published', options.projection ?? 'card'));
         return { rows: await this.decorate(kind, result.rows), pagination: result.pagination };
     }
 
@@ -91,7 +95,7 @@ export class PageQueries {
         const codec = this.model.hasKind(page.type) ? this.model.dataCodec(page.type) : null;
         return {
             languageCode,
-            title: pick(page.titleMlt, languageCode) ?? page.title,
+            title: page.titleMlt && languageCode in page.titleMlt ? page.titleMlt[languageCode] : page.title,
             annotation: pick(page.annotation, languageCode),
             seoTitle: pick(page.seoTitle, languageCode),
             seoDescription: pick(page.seoDescription, languageCode),

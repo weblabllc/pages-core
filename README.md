@@ -163,6 +163,7 @@ const queries = new PageQueries(store, model, tenant)
 
 await queries.list('blog', req.query)               // published cards, with author and rating
 await queries.adminList(req.query)                  // any status, for the admin
+await queries.list('page', req.query, { projection: 'full' })   // with content; lists return cards by default
 await queries.publishedPage('countries/eu/germany') // { page, meta: { folders, author, rating } } | { redirectTo } | null
 await queries.publishedIndex()                      // light rows of everything published, for sitemaps
 queries.localizedView(page, 'en')                   // { languageCode, title, annotation, seoTitle, seoDescription, data }

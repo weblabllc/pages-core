@@ -138,6 +138,8 @@ for (const [name, options] of targets) {
                 const about = (await queries.getBySlug('about'))!;
                 expect(queries.localizedView(about, 'uk')).toMatchObject({ languageCode: 'uk', title: 'Про нас' });
                 expect(queries.localizedView(about, 'de')).toMatchObject({ languageCode: 'en', title: 'About' });
+                const blankEnglish = { ...about, titleMlt: { en: '', uk: 'Про нас' }, seoTitle: { uk: 'SEO' } };
+                expect(queries.localizedView(blankEnglish, 'en')).toMatchObject({ languageCode: 'en', title: '', seoTitle: null });
             });
 
             it('settles ten parallel creates at one address with a single winner', async () => {
@@ -280,6 +282,8 @@ for (const [name, options] of targets) {
                 const card = list.rows.find(r => r.slug === 'post-c')!;
                 expect(card).toMatchObject({ author: { slug: 'ivan' }, rating: { avg: 4, count: 1 } });
                 expect(card.data ?? null).toBeNull();
+                const full = await queries.list('blog', {}, { projection: 'full' });
+                expect(full.rows.find(r => r.slug === 'post-c')!.data).toEqual(puck('x'));
                 const drafts = await queries.adminList({ type: 'blog', status: 'draft' });
                 expect(drafts.rows.map(r => r.slug)).toContain('first-post');
                 expect((await queries.list('blog', { limit: 1000 })).pagination.page_size).toBe(model.maxPageSize());
