@@ -8,7 +8,7 @@ import { assignRoleIn } from './page-roles.js';
 import { PageDraft, validatePageInput } from './page-rules.js';
 import { assertPortableIdentity, exportPortablePage, PortablePage } from './portable.js';
 import { PagePatch, PageStore, StoredPage } from './store.js';
-import { inTransaction } from './writes.js';
+import { inTransaction, stillThere } from './writes.js';
 
 export interface PageServiceOptions {
     tenant?: string;
@@ -132,8 +132,8 @@ export class PageService {
             const next = { status: current.status, publishedAt: current.publishedAt };
             if (reason === 'published') applyPublish(next, this.now(), this.model.publishPolicy());
             else applyUnpublish(next, this.model.publishPolicy());
-            const page = await tx.updatePage(id, next, this.tenant);
-            return { page, changes: [pageChange(page!, reason)] };
+            const page = stillThere(await tx.updatePage(id, next, this.tenant), id);
+            return { page, changes: [pageChange(page, reason)] };
         });
     }
 
@@ -159,13 +159,13 @@ export class PageService {
             if (draft.segment !== undefined) patch.segment = draft.segment;
         }
 
-        let page = await tx.updatePage(current.id, patch, this.tenant);
+        let page = stillThere(await tx.updatePage(current.id, patch, this.tenant), current.id);
         const renamed = slug !== current.slug;
-        const changes: PageChange[] = [pageChange(page!, renamed && reason === 'updated' ? 'renamed' : reason, current.slug)];
+        const changes: PageChange[] = [pageChange(page, renamed && reason === 'updated' ? 'renamed' : reason, current.slug)];
         if (draft.role !== undefined && draft.role !== (current.role ?? null)) {
             const released = await assignRoleIn(tx, this.model, this.tenant, current.id, draft.role);
             if (released) changes.push(pageChange(released, 'role_released'));
-            page = await tx.getPageById(current.id, this.tenant);
+            page = stillThere(await tx.getPageById(current.id, this.tenant), current.id);
         }
         return { page, changes };
     }

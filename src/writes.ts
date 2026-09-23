@@ -22,3 +22,8 @@ export async function inTransaction<T>(store: PageStore, fn: (tx: PageStore) => 
         throw conflictToContentError(error);
     }
 }
+
+export function stillThere<T>(value: T | null, id: string): T {
+    if (value === null) throw new ContentError('not_found', `Page ${id} was deleted meanwhile`, { id });
+    return value;
+}

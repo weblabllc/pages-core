@@ -17,7 +17,7 @@ import { PageChange, pageChange } from './page-changes.js';
 import { collectPages } from './scan.js';
 import { PageStore, StoredPage } from './store.js';
 import { PageType } from './types.js';
-import { inTransaction } from './writes.js';
+import { inTransaction, stillThere } from './writes.js';
 
 export const FOLDER_LIMITS = { name: 255, nameMlt: 100 } as const;
 
@@ -203,8 +203,8 @@ export class PageAddressing {
             });
             if (slug === page.slug) continue;
             await renamePage(tx, this.model, this.tenant, page, slug);
-            const updated = await tx.updatePage(page.id, { slug }, this.tenant);
-            changes.push(pageChange(updated!, 'renamed', page.slug));
+            const updated = stillThere(await tx.updatePage(page.id, { slug }, this.tenant), page.id);
+            changes.push(pageChange(updated, 'renamed', page.slug));
         }
         return changes;
     }
