@@ -71,7 +71,7 @@
     "build": "tsc",
     "lint": "oxlint src/",
     "typecheck": "tsc --noEmit",
-    "test:stores": "docker compose -f docker-compose.test.yml up -d --wait && PAGES_PG_URL=postgres://postgres:test@localhost:55432/pages PAGES_MYSQL_URL=mysql://root:test@localhost:53306/pages PAGES_MONGO_URL=mongodb://localhost:57017 vitest run test/stores"
+    "test:stores": "docker compose -f docker-compose.test.yml up -d --wait && PAGES_PG_URL=postgres://postgres:test@localhost:55432/pages PAGES_MYSQL_URL=mysql://root:test@localhost:53306/pages PAGES_MONGO_URL='mongodb://localhost:57017/?directConnection=true' vitest run test/stores"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

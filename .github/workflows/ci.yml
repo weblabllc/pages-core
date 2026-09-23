@@ -26,22 +26,24 @@ jobs:
           MYSQL_DATABASE: pages
         ports: ["3306:3306"]
         options: --health-cmd "mysqladmin ping -h 127.0.0.1 -ptest" --health-interval 2s --health-retries 60
-      mongo:
-        image: mongo:8
-        ports: ["27017:27017"]
-        options: >-
-          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1})'"
-          --health-interval 2s --health-retries 30
     env:
       PAGES_PG_URL: postgres://postgres:test@localhost:5432/pages
       PAGES_MYSQL_URL: mysql://root:test@localhost:3306/pages
-      PAGES_MONGO_URL: mongodb://localhost:27017
+      PAGES_MONGO_URL: mongodb://localhost:27017/?directConnection=true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
           cache: npm
+      - name: mongo replica set
+        run: |
+          docker run -d --name mongo -p 27017:27017 mongo:8 --replSet rs0 --bind_ip_all
+          for i in $(seq 1 60); do
+            docker exec mongo mongosh --quiet --eval "try { rs.status().ok } catch (e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'localhost:27017' }] }).ok }" && break
+            sleep 2
+          done
+          docker exec mongo mongosh --quiet --eval "rs.status().ok"
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck

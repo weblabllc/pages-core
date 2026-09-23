@@ -21,8 +21,9 @@ services:
       retries: 60
   mongo:
     image: mongo:8
+    command: ["--replSet", "rs0", "--bind_ip_all"]
     ports: ["57017:27017"]
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 })"]
+      test: ["CMD", "mongosh", "--quiet", "--eval", "try { rs.status().ok } catch (e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'localhost:27017' }] }).ok }"]
       interval: 2s
       retries: 30
