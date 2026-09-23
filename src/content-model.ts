@@ -32,7 +32,7 @@ export interface PageLimits {
     seoDescription: number;
 }
 
-export const PAGE_LIMITS: PageLimits = { title: 255, titleMlt: 300, annotation: 1000, seoTitle: 300, seoDescription: 1000 };
+export const PAGE_LIMITS: PageLimits = { title: 512, titleMlt: 300, annotation: 1000, seoTitle: 300, seoDescription: 1000 };
 
 export type PublishPolicy = 'first' | 'latest';
 

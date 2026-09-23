@@ -49,16 +49,22 @@ export type PortableImport = Omit<Partial<PortablePage>, 'data'> & { data: PuckD
 const isObject = (value: unknown): value is Record<string, unknown> =>
     typeof value === 'object' && value !== null && !Array.isArray(value);
 
-export function validatePortablePage(body: unknown, expected: ImportExpectation): PortableImport {
-    const fail = (message: string): never => {
-        throw new ContentError('invalid_import', message);
-    };
-    if (!isObject(body)) fail('Body must be a JSON object');
-    const input = body as Record<string, unknown>;
-    if (input.slug !== undefined && input.slug !== expected.slug) {
-        fail(`slug mismatch: body has "${String(input.slug)}", expected "${expected.slug}"`);
+const failImport = (message: string): never => {
+    throw new ContentError('invalid_import', message);
+};
+
+export function assertPortableIdentity(body: unknown, expected: Pick<ImportExpectation, 'slug' | 'type'>): Record<string, unknown> {
+    if (!isObject(body)) return failImport('Body must be a JSON object');
+    if (body.slug !== undefined && body.slug !== expected.slug) {
+        failImport(`slug mismatch: body has "${String(body.slug)}", expected "${expected.slug}"`);
     }
-    if (input.type !== undefined && input.type !== expected.type) fail('type is immutable');
+    if (body.type !== undefined && body.type !== expected.type) failImport('type is immutable');
+    return body;
+}
+
+export function validatePortablePage(body: unknown, expected: ImportExpectation): PortableImport {
+    const fail = failImport;
+    const input = assertPortableIdentity(body, expected);
 
     const data = input.data;
     const dataError = puckDataError(data, expected.langs);

@@ -38,7 +38,11 @@ export type ContentErrorCode =
     | 'invalid_comment'
     | 'invalid_page'
     | 'type_immutable'
-    | 'comments_disabled';
+    | 'comments_disabled'
+    | 'invalid_folder'
+    | 'role_conflict'
+    | 'category_in_use'
+    | 'author_in_use';
 
 const STATUS_BY_CODE: Record<ContentErrorCode, number> = {
     not_found: 404,
@@ -53,6 +57,10 @@ const STATUS_BY_CODE: Record<ContentErrorCode, number> = {
     invalid_page: 400,
     type_immutable: 400,
     comments_disabled: 403,
+    invalid_folder: 400,
+    role_conflict: 409,
+    category_in_use: 409,
+    author_in_use: 409,
 };
 
 export class ContentError extends Error {

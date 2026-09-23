@@ -82,11 +82,14 @@ export function validateCommentInput(raw: unknown): CommentInput {
     return { authorName, authorEmail, content, rating };
 }
 
+export function ratingFromTotals(count: number, sum: number): RatingSummary | null {
+    if (!count) return null;
+    return { avg: Math.round((sum / count) * 10) / 10, count };
+}
+
 export function ratingSummary(ratings: ReadonlyArray<number | null>): RatingSummary | null {
     const values = ratings.filter((r): r is number => typeof r === 'number');
-    if (!values.length) return null;
-    const avg = values.reduce((sum, r) => sum + r, 0) / values.length;
-    return { avg: Math.round(avg * 10) / 10, count: values.length };
+    return ratingFromTotals(values.length, values.reduce((sum, r) => sum + r, 0));
 }
 
 export function uuidv7(now: number = Date.now()): string {

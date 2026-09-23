@@ -8,6 +8,7 @@ export interface DataCodec {
     validate(raw: unknown, langs: readonly string[]): unknown;
     words(data: unknown, primaryLang: string, langs: readonly string[]): number;
     meta?(data: unknown): { title?: string; segment?: string };
+    localize?(data: unknown, lang: string, primaryLang: string): unknown;
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -106,6 +107,10 @@ export function localizedBlocksData(): DataCodec {
         words(data, primaryLang) {
             const blocks = isObject(data) && isObject(data[primaryLang]) ? (data[primaryLang] as { blocks?: unknown }).blocks : [];
             return countWords(blocksToPlainText(normalizeBlocks(blocks)));
+        },
+        localize(data, lang, primaryLang) {
+            if (!isObject(data)) return { blocks: [] };
+            return data[lang] ?? data[primaryLang] ?? { blocks: [] };
         },
     };
 }
