@@ -1,114 +1,138 @@
-import { clampPage, paginationMeta, pageOffset } from '../pagination.js';
-import {
-    loadOptionalModule,
-    PageListQuery,
-    PageListResult,
-    PageStore,
-    PageStoreOptions,
-    SchemaFeatures,
-    StoredAuthor,
-    StoredCategory,
-    StoredPage,
-} from '../store.js';
-import { StoredFolder } from '../addressing.js';
-import { CommentListQuery, CommentStatus, StoredComment } from '../comments.js';
-import {
-    authorToRow,
-    categoryToRow,
-    commentToRow,
-    folderToRow,
-    pageToRow,
-    patchToColumns,
-    rowToAuthor,
-    rowToCategory,
-    rowToComment,
-    rowToFolder,
-    rowToPage,
-    TableNames,
-    tableNames,
-} from './sql-common.js';
+import { loadOptionalModule, PageStore, PageStoreOptions, SchemaFeatures } from '../store.js';
+import { uuidv7 } from '../comments.js';
+import { TableNames, tableNames } from './sql-common.js';
+import { ColumnCache, SqlDialect, SqlExecutor, SqlPageStore } from './sql-store.js';
 
-const ignoreMissingTable = (error: { code?: string }) => {
-    if (error.code !== '42P01') throw error;
-};
-
-interface PgPool {
-    query(sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>>; rowCount: number | null }>;
-    end(): Promise<void>;
+interface PgResult {
+    rows: Array<Record<string, unknown>>;
+    rowCount: number | null;
 }
 
-export class PgPageStore implements PageStore {
-    private constructor(
-        private pool: PgPool,
+interface PgQueryable {
+    query(sql: string, params?: unknown[]): Promise<PgResult>;
+}
+
+interface PgPoolClient extends PgQueryable {
+    release(error?: Error | boolean): void;
+}
+
+interface PgPool extends PgQueryable {
+    connect?(): Promise<PgPoolClient>;
+    end?(): Promise<void>;
+}
+
+function dollarParams(sql: string): string {
+    let n = 0;
+    return sql.replace(/\?/g, () => `$${++n}`);
+}
+
+function executor(conn: PgQueryable): SqlExecutor {
+    return {
+        async rows(sql, params = []) {
+            return (await conn.query(dollarParams(sql), params)).rows;
+        },
+        async run(sql, params = []) {
+            return (await conn.query(dollarParams(sql), params)).rowCount ?? 0;
+        },
+    };
+}
+
+const pgDialect: SqlDialect = {
+    ilike: expr => `${expr} ILIKE ?`,
+    jsonText: column => `(${column} ->> ?)`,
+    jsonKey: lang => lang,
+    nulls: direction => (direction === 'asc' ? ' NULLS FIRST' : ' NULLS LAST'),
+    upsert: (table, columns, key, update) =>
+        `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})
+         ON CONFLICT (${key.join(', ')}) DO UPDATE SET ${update.map(c => `${c} = EXCLUDED.${c}`).join(', ')}`,
+    conflictTarget(error, t) {
+        const e = error as { code?: string; constraint?: string };
+        if (e?.code !== '23505') return null;
+        const name = e.constraint ?? '';
+        if (name === `${t.pages}_pkey`) return 'page_id';
+        if (name === `${t.pages}_slug_uq`) return 'page_slug';
+        if (name === `${t.pages}_role_idx`) return 'page_role';
+        if (name === `${t.folders}_sibling_uq`) return 'folder_sibling';
+        if (name === `${t.comments}_pkey`) return 'comment_id';
+        return 'unknown';
+    },
+    columnsQuery: `SELECT column_name AS c FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ?`,
+};
+
+const LOCK_WAIT_MS = 120_000;
+const BACKFILL_BATCH = 500;
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+class PgSchema {
+    constructor(
+        private db: SqlExecutor,
         private t: TableNames,
-        private ownsPool: boolean,
+        private concurrent: boolean,
     ) {}
 
-    static async create(options: PageStoreOptions): Promise<PgPageStore> {
-        const t = tableNames(options.tablePrefix ?? 'rl_');
-        if (options.client) {
-            return new PgPageStore(options.client as PgPool, t, false);
-        }
-        const pg = await loadOptionalModule('pg', 'the postgres page store');
-        const pool = new pg.Pool({ connectionString: options.url });
-        return new PgPageStore(pool, t, true);
+    private get cic(): string {
+        return this.concurrent ? ' CONCURRENTLY' : '';
     }
 
-    async ensureSchema(features: SchemaFeatures = {}): Promise<void> {
+    private async tableExists(table: string): Promise<boolean> {
+        const rows = await this.db.rows(`SELECT to_regclass(?) AS r`, [table]);
+        return rows[0]?.r !== null && rows[0]?.r !== undefined;
+    }
+
+    private async columns(table: string): Promise<Map<string, { nullable: boolean; type: string; length: number | null }>> {
+        const rows = await this.db.rows(
+            `SELECT column_name AS c, is_nullable AS n, data_type AS d, character_maximum_length AS l
+             FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ?`,
+            [table],
+        );
+        return new Map(
+            rows.map(r => [String(r.c), { nullable: r.n === 'YES', type: String(r.d), length: r.l === null ? null : Number(r.l) }]),
+        );
+    }
+
+    private async addColumns(table: string, defs: Record<string, string>): Promise<void> {
+        const have = await this.columns(table);
+        const missing = Object.entries(defs).filter(([name]) => !have.has(name));
+        if (!missing.length) return;
+        await this.db.run(`ALTER TABLE ${table} ${missing.map(([name, def]) => `ADD COLUMN IF NOT EXISTS ${name} ${def}`).join(', ')}`);
+    }
+
+    private async index(name: string, definition: string, unique = false): Promise<void> {
+        const rows = await this.db.rows(
+            `SELECT i.indisvalid AS v FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
+             WHERE c.relname = ? AND c.relnamespace = current_schema()::regnamespace`,
+            [name],
+        );
+        if (rows[0]?.v === true) return;
+        if (rows[0]) await this.db.run(`DROP INDEX${this.cic} IF EXISTS ${name}`);
+        await this.db.run(`CREATE ${unique ? 'UNIQUE ' : ''}INDEX${this.cic} IF NOT EXISTS ${name} ON ${definition}`);
+    }
+
+    private async inBatch(work: () => Promise<void>): Promise<void> {
+        if (!this.concurrent) return work();
+        await this.db.run('BEGIN');
+        try {
+            await work();
+            await this.db.run('COMMIT');
+        } catch (error) {
+            await this.db.run('ROLLBACK');
+            throw error;
+        }
+    }
+
+    async apply(features: SchemaFeatures): Promise<void> {
         const { pages = true, authors = false, categories = false, folders = false, roles = false, comments = false } = features;
-        if (pages) {
-            await this.pool.query(`CREATE TABLE IF NOT EXISTS ${this.t.pages} (
-                slug varchar(255) NOT NULL,
-                tenant varchar(64) NOT NULL DEFAULT '',
-                type varchar(32) NOT NULL DEFAULT 'page',
-                status varchar(16) NOT NULL DEFAULT 'draft',
-                title varchar(255),
-                title_mlt jsonb,
-                annotation jsonb,
-                data jsonb NOT NULL DEFAULT 'null'::jsonb,
-                category varchar(64),
-                pinned boolean NOT NULL DEFAULT false,
-                author_slug varchar(64),
-                cover_image varchar(512),
-                reading_time integer,
-                published_at timestamptz,
-                created_at timestamptz NOT NULL DEFAULT now(),
-                updated_at timestamptz NOT NULL DEFAULT now(),
-                PRIMARY KEY (tenant, slug)
-            )`);
-            await this.pool.query(
-                `CREATE INDEX IF NOT EXISTS ${this.t.pages}_list_idx ON ${this.t.pages} (tenant, type, status, published_at DESC)`,
-            );
-            await this.pool.query(`ALTER TABLE ${this.t.pages} ADD COLUMN IF NOT EXISTS seo_title jsonb`);
-            await this.pool.query(`ALTER TABLE ${this.t.pages} ADD COLUMN IF NOT EXISTS seo_description jsonb`);
-            await this.pool.query(`ALTER TABLE ${this.t.pages} ADD COLUMN IF NOT EXISTS created_by varchar(64)`);
+        const slugHistory = features.slugHistory ?? folders;
+        if (pages) await this.pages();
+        if (roles) {
+            await this.addColumns(this.t.pages, { role: 'varchar(32)' });
+            await this.index(`${this.t.pages}_role_idx`, `${this.t.pages} (tenant, role) WHERE role IS NOT NULL`, true);
         }
-        if (comments) {
-            await this.pool.query(`CREATE TABLE IF NOT EXISTS ${this.t.comments} (
-                id varchar(36) NOT NULL,
-                tenant varchar(64) NOT NULL DEFAULT '',
-                page_slug varchar(255) NOT NULL,
-                user_id varchar(64),
-                author_name varchar(120) NOT NULL,
-                author_email varchar(255),
-                content text NOT NULL,
-                rating smallint,
-                status varchar(16) NOT NULL DEFAULT 'pending',
-                moderated_by varchar(64),
-                moderated_at timestamptz,
-                ip varchar(64),
-                created_at timestamptz NOT NULL DEFAULT now(),
-                PRIMARY KEY (tenant, id)
-            )`);
-            await this.pool.query(
-                `CREATE INDEX IF NOT EXISTS ${this.t.comments}_page_idx ON ${this.t.comments} (tenant, page_slug, status, created_at DESC)`,
-            );
-            await this.pool.query(
-                `CREATE INDEX IF NOT EXISTS ${this.t.comments}_queue_idx ON ${this.t.comments} (tenant, status, created_at DESC)`,
-            );
-        }
+        if (folders) await this.folders();
+        if (slugHistory) await this.slugHistory();
         if (authors) {
-            await this.pool.query(`CREATE TABLE IF NOT EXISTS ${this.t.authors} (
+            await this.db.run(`CREATE TABLE IF NOT EXISTS ${this.t.authors} (
                 slug varchar(64) NOT NULL,
                 tenant varchar(64) NOT NULL DEFAULT '',
                 name jsonb NOT NULL,
@@ -119,7 +143,7 @@ export class PgPageStore implements PageStore {
             )`);
         }
         if (categories) {
-            await this.pool.query(`CREATE TABLE IF NOT EXISTS ${this.t.categories} (
+            await this.db.run(`CREATE TABLE IF NOT EXISTS ${this.t.categories} (
                 slug varchar(64) NOT NULL,
                 tenant varchar(64) NOT NULL DEFAULT '',
                 kind varchar(16) NOT NULL,
@@ -129,334 +153,263 @@ export class PgPageStore implements PageStore {
                 PRIMARY KEY (tenant, kind, slug)
             )`);
         }
-        if (roles) {
-            await this.pool.query(`ALTER TABLE ${this.t.pages} ADD COLUMN IF NOT EXISTS role varchar(32)`);
-            await this.pool.query(
-                `CREATE UNIQUE INDEX IF NOT EXISTS ${this.t.pages}_role_idx ON ${this.t.pages} (tenant, role) WHERE role IS NOT NULL`,
-            );
-        }
-        if (folders) {
-            await this.pool.query(`ALTER TABLE ${this.t.pages} ADD COLUMN IF NOT EXISTS folder_id varchar(64)`);
-            await this.pool.query(`ALTER TABLE ${this.t.pages} ADD COLUMN IF NOT EXISTS segment varchar(255)`);
-            await this.pool.query(
-                `CREATE INDEX IF NOT EXISTS ${this.t.pages}_folder_idx ON ${this.t.pages} (tenant, folder_id)`,
-            );
-            await this.pool.query(`CREATE TABLE IF NOT EXISTS ${this.t.folders} (
-                id varchar(64) NOT NULL,
-                tenant varchar(64) NOT NULL DEFAULT '',
-                parent_id varchar(64),
-                name varchar(255) NOT NULL,
-                name_mlt jsonb,
-                segment varchar(64) NOT NULL,
-                sort_order integer NOT NULL DEFAULT 0,
-                PRIMARY KEY (tenant, id)
-            )`);
-            await this.pool.query(`CREATE TABLE IF NOT EXISTS ${this.t.slugHistory} (
+        if (comments) await this.comments();
+    }
+
+    private async pages(): Promise<void> {
+        const p = this.t.pages;
+        if (!(await this.tableExists(p))) {
+            await this.db.run(`CREATE TABLE IF NOT EXISTS ${p} (
+                id varchar(36) NOT NULL,
                 slug varchar(255) NOT NULL,
                 tenant varchar(64) NOT NULL DEFAULT '',
-                current_slug varchar(255) NOT NULL,
+                type varchar(32) NOT NULL DEFAULT 'page',
+                status varchar(16) NOT NULL DEFAULT 'draft',
+                title varchar(512),
+                title_mlt jsonb,
+                annotation jsonb,
+                data jsonb NOT NULL DEFAULT 'null'::jsonb,
+                category varchar(64),
+                pinned boolean NOT NULL DEFAULT false,
+                author_slug varchar(64),
+                cover_image text,
+                reading_time integer,
+                published_at timestamptz,
+                seo_title jsonb,
+                seo_description jsonb,
+                created_by varchar(64),
                 created_at timestamptz NOT NULL DEFAULT now(),
-                PRIMARY KEY (tenant, slug)
+                updated_at timestamptz NOT NULL DEFAULT now(),
+                CONSTRAINT ${p}_pkey PRIMARY KEY (tenant, id)
             )`);
+        } else {
+            await this.addColumns(p, { seo_title: 'jsonb', seo_description: 'jsonb', created_by: 'varchar(64)' });
+            const cols = await this.columns(p);
+            const title = cols.get('title');
+            if (title?.length !== null && title?.length !== undefined && title.length < 512) {
+                await this.db.run(`ALTER TABLE ${p} ALTER COLUMN title TYPE varchar(512)`);
+            }
+            if (cols.get('cover_image')?.type === 'character varying') {
+                await this.db.run(`ALTER TABLE ${p} ALTER COLUMN cover_image TYPE text`);
+            }
+            if ((await this.primaryKey(p)).join(',') === 'tenant,slug') await this.upgradePagesKey();
         }
+        await this.index(`${p}_slug_uq`, `${p} (tenant, slug)`, true);
+        await this.index(`${p}_list_idx`, `${p} (tenant, type, status, published_at DESC)`);
+        await this.index(`${p}_author_idx`, `${p} (tenant, author_slug)`);
+        await this.index(`${p}_category_idx`, `${p} (tenant, category)`);
+    }
+
+    private async primaryKey(table: string): Promise<string[]> {
+        const rows = await this.db.rows(
+            `SELECT a.attname AS c FROM pg_index i
+             CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord)
+             JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
+             WHERE i.indrelid = ?::regclass AND i.indisprimary ORDER BY k.ord`,
+            [table],
+        );
+        return rows.map(r => String(r.c));
+    }
+
+    private async upgradePagesKey(): Promise<void> {
+        const p = this.t.pages;
+        await this.addColumns(p, { id: 'varchar(36)' });
+        for (;;) {
+            const batch = await this.db.rows(`SELECT tenant, slug, created_at FROM ${p} WHERE id IS NULL LIMIT ${BACKFILL_BATCH}`);
+            if (!batch.length) break;
+            await this.inBatch(async () => {
+                for (const row of batch) {
+                    const created = row.created_at instanceof Date ? row.created_at.getTime() : Date.parse(String(row.created_at));
+                    await this.db.run(`UPDATE ${p} SET id = ? WHERE tenant = ? AND slug = ? AND id IS NULL`, [
+                        uuidv7(Number.isFinite(created) ? created : Date.now()),
+                        row.tenant,
+                        row.slug,
+                    ]);
+                }
+            });
+        }
+        if ((await this.columns(p)).get('id')?.nullable) {
+            if (this.concurrent) {
+                const check = `${p}_id_nn`;
+                const existing = await this.db.rows(`SELECT 1 FROM pg_constraint WHERE conrelid = ?::regclass AND conname = ?`, [p, check]);
+                if (!existing.length) await this.db.run(`ALTER TABLE ${p} ADD CONSTRAINT ${check} CHECK (id IS NOT NULL) NOT VALID`);
+                await this.db.run(`ALTER TABLE ${p} VALIDATE CONSTRAINT ${check}`);
+                await this.db.run(`ALTER TABLE ${p} ALTER COLUMN id SET NOT NULL`);
+                await this.db.run(`ALTER TABLE ${p} DROP CONSTRAINT ${check}`);
+            } else {
+                await this.db.run(`ALTER TABLE ${p} ALTER COLUMN id SET NOT NULL`);
+            }
+        }
+        await this.index(`${p}_slug_uq`, `${p} (tenant, slug)`, true);
+        await this.index(`${p}_pkey_new`, `${p} (tenant, id)`, true);
+        const [pk] = await this.db.rows(`SELECT conname AS n FROM pg_constraint WHERE conrelid = ?::regclass AND contype = 'p'`, [p]);
+        await this.inBatch(async () => {
+            if (this.concurrent) await this.db.run(`SET LOCAL lock_timeout = '10s'`);
+            if (pk) await this.db.run(`ALTER TABLE ${p} DROP CONSTRAINT ${String(pk.n)}`);
+            await this.db.run(`ALTER TABLE ${p} ADD CONSTRAINT ${p}_pkey PRIMARY KEY USING INDEX ${p}_pkey_new`);
+        });
+    }
+
+    private async folders(): Promise<void> {
+        const f = this.t.folders;
+        await this.addColumns(this.t.pages, { folder_id: 'varchar(64)', segment: 'varchar(255)' });
+        await this.index(`${this.t.pages}_folder_idx`, `${this.t.pages} (tenant, folder_id)`);
+        await this.db.run(`CREATE TABLE IF NOT EXISTS ${f} (
+            id varchar(64) NOT NULL,
+            tenant varchar(64) NOT NULL DEFAULT '',
+            parent_id varchar(64),
+            name varchar(255) NOT NULL,
+            name_mlt jsonb,
+            segment varchar(64) NOT NULL,
+            sort_order integer NOT NULL DEFAULT 0,
+            PRIMARY KEY (tenant, id)
+        )`);
+        const duplicates = await this.db.rows(
+            `SELECT tenant, COALESCE(parent_id, '') AS parent, segment, count(*) AS n FROM ${f}
+             GROUP BY tenant, COALESCE(parent_id, ''), segment HAVING count(*) > 1`,
+        );
+        if (duplicates.length) {
+            const list = duplicates.map(d => `tenant "${d.tenant}", parent "${d.parent || 'root'}", segment "${d.segment}" (${d.n})`);
+            throw new Error(`Cannot add the folder sibling index: rename these duplicate folders first: ${list.join('; ')}`);
+        }
+        await this.index(`${f}_sibling_uq`, `${f} (tenant, (COALESCE(parent_id, '')), segment)`, true);
+    }
+
+    private async slugHistory(): Promise<void> {
+        const h = this.t.slugHistory;
+        await this.db.run(`CREATE TABLE IF NOT EXISTS ${h} (
+            slug varchar(255) NOT NULL,
+            tenant varchar(64) NOT NULL DEFAULT '',
+            page_id varchar(36),
+            created_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (tenant, slug)
+        )`);
+        const cols = await this.columns(h);
+        if (cols.has('current_slug')) {
+            await this.addColumns(h, { page_id: 'varchar(36)' });
+            await this.db.run(
+                `UPDATE ${h} h SET page_id = p.id FROM ${this.t.pages} p
+                 WHERE p.tenant = h.tenant AND p.slug = h.current_slug AND p.created_at <= h.created_at AND h.page_id IS NULL`,
+            );
+            if (!cols.get('current_slug')!.nullable) await this.db.run(`ALTER TABLE ${h} ALTER COLUMN current_slug DROP NOT NULL`);
+        }
+        await this.index(`${h}_page_idx`, `${h} (tenant, page_id)`);
+    }
+
+    private async comments(): Promise<void> {
+        const c = this.t.comments;
+        await this.db.run(`CREATE TABLE IF NOT EXISTS ${c} (
+            id varchar(36) NOT NULL,
+            tenant varchar(64) NOT NULL DEFAULT '',
+            page_id varchar(36) NOT NULL,
+            user_id varchar(64),
+            author_name varchar(120) NOT NULL,
+            author_email varchar(255),
+            content text NOT NULL,
+            rating smallint CONSTRAINT ${c}_rating_chk CHECK (rating BETWEEN 1 AND 5),
+            status varchar(16) NOT NULL DEFAULT 'pending' CONSTRAINT ${c}_status_chk CHECK (status IN ('pending', 'approved', 'rejected')),
+            moderated_by varchar(64),
+            moderated_at timestamptz,
+            ip varchar(64),
+            created_at timestamptz NOT NULL DEFAULT now(),
+            CONSTRAINT ${c}_pkey PRIMARY KEY (tenant, id)
+        )`);
+        await this.index(`${c}_page_idx`, `${c} (tenant, page_id, status, created_at DESC, id DESC)`);
+        await this.index(`${c}_queue_idx`, `${c} (tenant, status, created_at DESC, id DESC)`);
+    }
+}
+
+export class PgPageStore extends SqlPageStore {
+    private constructor(
+        private conn: PgPool,
+        t: TableNames,
+        private ownsPool: boolean,
+        private mode: 'pool' | 'bound',
+        columns: ColumnCache,
+        private lockKey: string,
+    ) {
+        super(executor(conn), pgDialect, t, columns);
+    }
+
+    static async create(options: PageStoreOptions): Promise<PgPageStore> {
+        const prefix = options.tablePrefix ?? 'rl_';
+        const t = tableNames(prefix);
+        const mode = options.clientMode ?? 'pool';
+        const lockKey = `pages-core:${prefix}`;
+        if (options.client) return new PgPageStore(options.client as PgPool, t, false, mode, {}, lockKey);
+        const pg = await loadOptionalModule('pg', 'the postgres page store');
+        return new PgPageStore(new pg.Pool({ connectionString: options.url }), t, true, mode, {}, lockKey);
+    }
+
+    private async checkout(): Promise<PgPoolClient> {
+        if (!this.conn.connect) {
+            throw new Error('The postgres client cannot check out connections; pass a pool, or clientMode "bound" for a client already in a transaction');
+        }
+        return this.conn.connect();
+    }
+
+    async ensureSchema(features: SchemaFeatures = {}): Promise<void> {
+        if (this.mode === 'bound') {
+            await this.db.rows(`SELECT pg_advisory_xact_lock(hashtext(?))`, [this.lockKey]);
+            await new PgSchema(this.db, this.t, false).apply(features);
+            this.forgetColumns();
+            return;
+        }
+        const client = await this.checkout();
+        const db = executor(client);
+        let broken: Error | undefined;
+        try {
+            const deadline = Date.now() + LOCK_WAIT_MS;
+            while (!(await db.rows(`SELECT pg_try_advisory_lock(hashtext(?)) AS ok`, [this.lockKey]))[0]?.ok) {
+                if (Date.now() > deadline) throw new Error(`Timed out waiting for the schema lock ${this.lockKey}`);
+                await sleep(100);
+            }
+            try {
+                await new PgSchema(db, this.t, true).apply(features);
+            } finally {
+                await db.rows(`SELECT pg_advisory_unlock(hashtext(?))`, [this.lockKey]);
+            }
+        } catch (error) {
+            broken = error as Error;
+            throw error;
+        } finally {
+            client.release(broken);
+            this.forgetColumns();
+        }
+    }
+
+    async transaction<T>(fn: (tx: PageStore) => Promise<T>): Promise<T> {
+        if (this.mode === 'bound') return fn(this);
+        const client = await this.checkout();
+        try {
+            await client.query('BEGIN');
+        } catch (error) {
+            client.release(error as Error);
+            throw error;
+        }
+        let result: T;
+        try {
+            result = await fn(new PgPageStore(client, this.t, false, 'bound', this.columns, this.lockKey));
+        } catch (error) {
+            try {
+                await client.query('ROLLBACK');
+                client.release();
+            } catch (rollbackError) {
+                client.release(rollbackError as Error);
+            }
+            throw error;
+        }
+        try {
+            await client.query('COMMIT');
+        } catch (error) {
+            client.release(error as Error);
+            throw error;
+        }
+        client.release();
+        return result;
     }
 
     async close(): Promise<void> {
-        if (this.ownsPool) await this.pool.end();
-    }
-
-    async getPage(slug: string, tenant = ''): Promise<StoredPage | null> {
-        const { rows } = await this.pool.query(
-            `SELECT * FROM ${this.t.pages} WHERE tenant = $1 AND slug = $2`,
-            [tenant, slug],
-        );
-        return rows[0] ? rowToPage(rows[0]) : null;
-    }
-
-    async createPage(record: StoredPage): Promise<StoredPage> {
-        const row = pageToRow(record);
-        const cols = Object.keys(row);
-        const params = Object.values(row);
-        const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
-        await this.pool.query(
-            `INSERT INTO ${this.t.pages} (${cols.join(', ')}) VALUES (${placeholders})`,
-            params,
-        );
-        return (await this.getPage(record.slug, record.tenant ?? ''))!;
-    }
-
-    async updatePage(slug: string, patch: Partial<StoredPage>, tenant = ''): Promise<StoredPage | null> {
-        const entries = patchToColumns(patch);
-        if (!entries.length) return this.getPage(slug, tenant);
-        const sets = entries.map(([col], i) => `${col} = $${i + 1}`).join(', ');
-        const params = [...entries.map(([, v]) => v), tenant, slug];
-        await this.pool.query(
-            `UPDATE ${this.t.pages} SET ${sets}, updated_at = now() WHERE tenant = $${entries.length + 1} AND slug = $${entries.length + 2}`,
-            params,
-        );
-        return this.getPage(slug, tenant);
-    }
-
-    async deletePage(slug: string, tenant = ''): Promise<boolean> {
-        const res = await this.pool.query(
-            `DELETE FROM ${this.t.pages} WHERE tenant = $1 AND slug = $2`,
-            [tenant, slug],
-        );
-        return (res.rowCount ?? 0) > 0;
-    }
-
-    async listPages(query: PageListQuery = {}): Promise<PageListResult> {
-        const page = clampPage(query.page);
-        const pageSize = query.pageSize && query.pageSize > 0 ? query.pageSize : 25;
-        const where: string[] = ['tenant = $1'];
-        const params: unknown[] = [query.tenant ?? ''];
-        const add = (condition: string, value: unknown) => {
-            params.push(value);
-            where.push(condition.replace('?', `$${params.length}`));
-        };
-        if (query.type) add('type = ?', query.type);
-        if (query.status) add('status = ?', query.status);
-        if (query.category) add('category = ?', query.category);
-        if (query.authorSlug) add('author_slug = ?', query.authorSlug);
-        if (query.pinned !== undefined) add('pinned = ?', query.pinned);
-        if (query.search) {
-            params.push(`%${query.search}%`);
-            where.push(`(title ILIKE $${params.length} OR slug ILIKE $${params.length})`);
-        }
-        const whereSql = `WHERE ${where.join(' AND ')}`;
-        const { rows: countRows } = await this.pool.query(
-            `SELECT count(*)::int AS c FROM ${this.t.pages} ${whereSql}`,
-            params,
-        );
-        const total = Number(countRows[0]?.c ?? 0);
-        const { rows } = await this.pool.query(
-            `SELECT * FROM ${this.t.pages} ${whereSql}
-             ORDER BY pinned DESC, published_at DESC NULLS LAST, updated_at DESC
-             LIMIT ${pageSize} OFFSET ${pageOffset(page, pageSize)}`,
-            params,
-        );
-        return { rows: rows.map(rowToPage), pagination: paginationMeta(total, page, pageSize) };
-    }
-
-    async upsertAuthor(author: StoredAuthor): Promise<StoredAuthor> {
-        const row = authorToRow(author);
-        await this.pool.query(
-            `INSERT INTO ${this.t.authors} (slug, tenant, name, role, photo, enabled)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (tenant, slug) DO UPDATE SET name = $3, role = $4, photo = $5, enabled = $6`,
-            [row.slug, row.tenant, row.name, row.role, row.photo, row.enabled],
-        );
-        return (await this.getAuthor(author.slug, author.tenant ?? ''))!;
-    }
-
-    async getAuthor(slug: string, tenant = ''): Promise<StoredAuthor | null> {
-        const { rows } = await this.pool.query(
-            `SELECT * FROM ${this.t.authors} WHERE tenant = $1 AND slug = $2`,
-            [tenant, slug],
-        );
-        return rows[0] ? rowToAuthor(rows[0]) : null;
-    }
-
-    async listAuthors(options: { tenant?: string; enabledOnly?: boolean } = {}): Promise<StoredAuthor[]> {
-        const params: unknown[] = [options.tenant ?? ''];
-        const enabled = options.enabledOnly ? 'AND enabled = true' : '';
-        const { rows } = await this.pool.query(
-            `SELECT * FROM ${this.t.authors} WHERE tenant = $1 ${enabled} ORDER BY slug`,
-            params,
-        );
-        return rows.map(rowToAuthor);
-    }
-
-    async deleteAuthor(slug: string, tenant = ''): Promise<boolean> {
-        const res = await this.pool.query(
-            `DELETE FROM ${this.t.authors} WHERE tenant = $1 AND slug = $2`,
-            [tenant, slug],
-        );
-        return (res.rowCount ?? 0) > 0;
-    }
-
-    async countPagesByAuthor(authorSlug: string, tenant = ''): Promise<number> {
-        const { rows } = await this.pool.query(
-            `SELECT count(*)::int AS c FROM ${this.t.pages} WHERE tenant = $1 AND author_slug = $2`,
-            [tenant, authorSlug],
-        );
-        return Number(rows[0]?.c ?? 0);
-    }
-
-    async upsertCategory(category: StoredCategory): Promise<StoredCategory> {
-        const row = categoryToRow(category);
-        await this.pool.query(
-            `INSERT INTO ${this.t.categories} (slug, tenant, kind, name, sort_order, enabled)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (tenant, kind, slug) DO UPDATE SET name = $4, sort_order = $5, enabled = $6`,
-            [row.slug, row.tenant, row.kind, row.name, row.sort_order, row.enabled],
-        );
-        return category;
-    }
-
-    async listCategories(kind: string, options: { tenant?: string; enabledOnly?: boolean } = {}): Promise<StoredCategory[]> {
-        const enabled = options.enabledOnly ? 'AND enabled = true' : '';
-        const { rows } = await this.pool.query(
-            `SELECT * FROM ${this.t.categories} WHERE tenant = $1 AND kind = $2 ${enabled} ORDER BY sort_order, slug`,
-            [options.tenant ?? '', kind],
-        );
-        return rows.map(rowToCategory);
-    }
-
-    async deleteCategory(kind: string, slug: string, tenant = ''): Promise<boolean> {
-        const res = await this.pool.query(
-            `DELETE FROM ${this.t.categories} WHERE tenant = $1 AND kind = $2 AND slug = $3`,
-            [tenant, kind, slug],
-        );
-        return (res.rowCount ?? 0) > 0;
-    }
-
-    async listFolders(tenant = ''): Promise<StoredFolder[]> {
-        const { rows } = await this.pool.query(
-            `SELECT * FROM ${this.t.folders} WHERE tenant = $1 ORDER BY sort_order, name`,
-            [tenant],
-        );
-        return rows.map(rowToFolder);
-    }
-
-    async saveFolder(folder: StoredFolder): Promise<StoredFolder> {
-        const row = folderToRow(folder);
-        await this.pool.query(
-            `INSERT INTO ${this.t.folders} (id, tenant, parent_id, name, name_mlt, segment, sort_order)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
-             ON CONFLICT (tenant, id) DO UPDATE SET parent_id = $3, name = $4, name_mlt = $5, segment = $6, sort_order = $7`,
-            [row.id, row.tenant, row.parent_id, row.name, row.name_mlt, row.segment, row.sort_order],
-        );
-        return folder;
-    }
-
-    async deleteFolder(id: string, tenant = ''): Promise<boolean> {
-        const res = await this.pool.query(`DELETE FROM ${this.t.folders} WHERE tenant = $1 AND id = $2`, [tenant, id]);
-        return (res.rowCount ?? 0) > 0;
-    }
-
-    async listPagesInFolders(folderIds: ReadonlyArray<string | null>, tenant = ''): Promise<StoredPage[]> {
-        const ids = folderIds.filter((id): id is string => id !== null);
-        const includeRoot = folderIds.includes(null);
-        if (!ids.length && !includeRoot) return [];
-        const { rows } = await this.pool.query(
-            `SELECT * FROM ${this.t.pages} WHERE tenant = $1 AND (folder_id = ANY($2::varchar[])${includeRoot ? ' OR folder_id IS NULL' : ''})`,
-            [tenant, ids],
-        );
-        return rows.map(rowToPage);
-    }
-
-    async renamePage(from: string, to: string, tenant = ''): Promise<void> {
-        if (from === to) return;
-        await this.pool.query(`DELETE FROM ${this.t.slugHistory} WHERE tenant = $1 AND slug = $2`, [tenant, to]);
-        await this.pool.query(
-            `UPDATE ${this.t.pages} SET slug = $3, updated_at = now() WHERE tenant = $1 AND slug = $2`,
-            [tenant, from, to],
-        );
-        await this.pool.query(
-            `UPDATE ${this.t.slugHistory} SET current_slug = $3 WHERE tenant = $1 AND current_slug = $2`,
-            [tenant, from, to],
-        );
-        await this.pool.query(
-            `INSERT INTO ${this.t.slugHistory} (slug, tenant, current_slug) VALUES ($1, $2, $3)
-             ON CONFLICT (tenant, slug) DO UPDATE SET current_slug = $3`,
-            [from, tenant, to],
-        );
-        await this.pool
-            .query(`UPDATE ${this.t.comments} SET page_slug = $3 WHERE tenant = $1 AND page_slug = $2`, [tenant, from, to])
-            .catch(ignoreMissingTable);
-    }
-
-    async findPageByRole(role: string, tenant = ''): Promise<StoredPage | null> {
-        const { rows } = await this.pool.query(`SELECT * FROM ${this.t.pages} WHERE tenant = $1 AND role = $2`, [tenant, role]);
-        return rows[0] ? rowToPage(rows[0]) : null;
-    }
-
-    async setRole(slug: string, role: string | null, tenant = ''): Promise<void> {
-        await this.pool.query(`UPDATE ${this.t.pages} SET role = $3, updated_at = now() WHERE tenant = $1 AND slug = $2`, [
-            tenant,
-            slug,
-            role,
-        ]);
-    }
-
-    async listPagesWithRole(tenant = ''): Promise<StoredPage[]> {
-        const { rows } = await this.pool.query(`SELECT * FROM ${this.t.pages} WHERE tenant = $1 AND role IS NOT NULL ORDER BY role`, [
-            tenant,
-        ]);
-        return rows.map(rowToPage);
-    }
-
-    async resolveFormerSlug(slug: string, tenant = ''): Promise<string | null> {
-        const { rows } = await this.pool.query(
-            `SELECT current_slug FROM ${this.t.slugHistory} WHERE tenant = $1 AND slug = $2`,
-            [tenant, slug],
-        );
-        return rows[0] ? String(rows[0].current_slug) : null;
-    }
-
-    async releaseFormerSlug(slug: string, tenant = ''): Promise<void> {
-        await this.pool.query(`DELETE FROM ${this.t.slugHistory} WHERE tenant = $1 AND slug = $2`, [tenant, slug]);
-    }
-
-    async createComment(comment: StoredComment): Promise<StoredComment> {
-        const row = commentToRow(comment);
-        const cols = Object.keys(row);
-        await this.pool.query(
-            `INSERT INTO ${this.t.comments} (${cols.join(', ')}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(', ')})`,
-            Object.values(row),
-        );
-        return (await this.getComment(comment.id, comment.tenant))!;
-    }
-
-    async getComment(id: string, tenant = ''): Promise<StoredComment | null> {
-        const { rows } = await this.pool.query(`SELECT * FROM ${this.t.comments} WHERE tenant = $1 AND id = $2`, [tenant, id]);
-        return rows[0] ? rowToComment(rows[0]) : null;
-    }
-
-    async listComments(query: CommentListQuery = {}) {
-        const page = clampPage(query.page);
-        const pageSize = query.pageSize && query.pageSize > 0 ? query.pageSize : 25;
-        const params: unknown[] = [query.tenant ?? ''];
-        const where = ['tenant = $1'];
-        if (query.pageSlug) {
-            params.push(query.pageSlug);
-            where.push(`page_slug = $${params.length}`);
-        }
-        if (query.status) {
-            params.push(query.status);
-            where.push(`status = $${params.length}`);
-        }
-        const clause = where.join(' AND ');
-        const { rows: countRows } = await this.pool.query(`SELECT count(*)::int AS n FROM ${this.t.comments} WHERE ${clause}`, params);
-        const { rows } = await this.pool.query(
-            `SELECT * FROM ${this.t.comments} WHERE ${clause} ORDER BY created_at DESC, id DESC
-             LIMIT ${pageSize} OFFSET ${pageOffset(page, pageSize)}`,
-            params,
-        );
-        return { rows: rows.map(rowToComment), pagination: paginationMeta(Number(countRows[0].n), page, pageSize) };
-    }
-
-    async setCommentStatus(id: string, status: CommentStatus, moderatedBy: string | null, tenant = ''): Promise<StoredComment | null> {
-        await this.pool.query(
-            `UPDATE ${this.t.comments} SET status = $3, moderated_by = $4, moderated_at = now() WHERE tenant = $1 AND id = $2`,
-            [tenant, id, status, moderatedBy],
-        );
-        return this.getComment(id, tenant);
-    }
-
-    async deleteComment(id: string, tenant = ''): Promise<boolean> {
-        const res = await this.pool.query(`DELETE FROM ${this.t.comments} WHERE tenant = $1 AND id = $2`, [tenant, id]);
-        return (res.rowCount ?? 0) > 0;
-    }
-
-    async listApprovedRatings(pageSlugs: readonly string[], tenant = ''): Promise<Array<{ pageSlug: string; rating: number }>> {
-        if (!pageSlugs.length) return [];
-        const { rows } = await this.pool.query(
-            `SELECT page_slug, rating FROM ${this.t.comments}
-             WHERE tenant = $1 AND page_slug = ANY($2::varchar[]) AND status = 'approved' AND rating IS NOT NULL`,
-            [tenant, [...pageSlugs]],
-        );
-        return rows.map(r => ({ pageSlug: String(r.page_slug), rating: Number(r.rating) }));
+        if (this.ownsPool) await this.conn.end?.();
     }
 }

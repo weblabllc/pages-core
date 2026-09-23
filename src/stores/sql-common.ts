@@ -1,6 +1,8 @@
 import { StoredFolder } from '../addressing.js';
-import { StoredAuthor, StoredCategory, StoredPage } from '../store.js';
+import { PAGE_PATCH_FIELDS, PagePatch, StoredAuthor, StoredCategory, StoredPage } from '../store.js';
 import { StoredComment } from '../comments.js';
+
+export const MAX_TABLE_PREFIX = 20;
 
 export interface TableNames {
     pages: string;
@@ -13,6 +15,9 @@ export interface TableNames {
 
 export function tableNames(prefix: string): TableNames {
     const p = prefix.replace(/[^a-zA-Z0-9_]/g, '');
+    if (p.length > MAX_TABLE_PREFIX) {
+        throw new Error(`Table prefix "${p}" is longer than ${MAX_TABLE_PREFIX} characters; index names would overflow`);
+    }
     return {
         pages: `${p}pages`,
         authors: `${p}authors`,
@@ -23,8 +28,80 @@ export function tableNames(prefix: string): TableNames {
     };
 }
 
+export function likePattern(term: string): string {
+    return `%${term.replace(/[\\%_]/g, char => `\\${char}`)}%`;
+}
+
+const JSON_COLUMNS = new Set(['title_mlt', 'annotation', 'data', 'seo_title', 'seo_description']);
+
+export const PAGE_COLUMNS: Record<(typeof PAGE_PATCH_FIELDS)[number], string> = {
+    slug: 'slug',
+    status: 'status',
+    title: 'title',
+    titleMlt: 'title_mlt',
+    annotation: 'annotation',
+    data: 'data',
+    category: 'category',
+    pinned: 'pinned',
+    authorSlug: 'author_slug',
+    coverImage: 'cover_image',
+    readingTime: 'reading_time',
+    publishedAt: 'published_at',
+    folderId: 'folder_id',
+    segment: 'segment',
+    seoTitle: 'seo_title',
+    seoDescription: 'seo_description',
+};
+
+export const PAGE_SORT_COLUMNS = {
+    publishedAt: 'published_at',
+    updatedAt: 'updated_at',
+    createdAt: 'created_at',
+    readingTime: 'reading_time',
+    title: 'title',
+    pinned: 'pinned',
+    id: 'id',
+} as const;
+
+export const COMMENT_SORT_COLUMNS = {
+    createdAt: 'created_at',
+    status: 'status',
+    rating: 'rating',
+    id: 'id',
+} as const;
+
+export const INDEX_PROJECTION_COLUMNS = [
+    'id',
+    'tenant',
+    'slug',
+    'type',
+    'status',
+    'title',
+    'title_mlt',
+    'category',
+    'folder_id',
+    'segment',
+    'role',
+    'published_at',
+    'updated_at',
+    'created_at',
+];
+
+export function patchToColumns(patch: PagePatch): Array<[string, unknown]> {
+    const entries: Array<[string, unknown]> = [];
+    for (const field of PAGE_PATCH_FIELDS) {
+        const value = patch[field];
+        if (value === undefined) continue;
+        const col = PAGE_COLUMNS[field];
+        entries.push([col, JSON_COLUMNS.has(col) && value !== null ? JSON.stringify(value) : value]);
+    }
+    return entries;
+}
+
 export function pageToRow(r: StoredPage): Record<string, unknown> {
     const placement: Record<string, unknown> = {};
+    if (r.createdAt) placement.created_at = r.createdAt;
+    if (r.updatedAt) placement.updated_at = r.updatedAt;
     if (r.folderId !== undefined) placement.folder_id = r.folderId;
     if (r.segment !== undefined) placement.segment = r.segment;
     if (r.role !== undefined) placement.role = r.role;
@@ -33,6 +110,7 @@ export function pageToRow(r: StoredPage): Record<string, unknown> {
     if (r.seoDescription !== undefined) placement.seo_description = r.seoDescription === null ? null : JSON.stringify(r.seoDescription);
     return {
         ...placement,
+        id: r.id,
         slug: r.slug,
         tenant: r.tenant ?? '',
         type: r.type,
@@ -69,6 +147,7 @@ function asDate(value: unknown): Date | null {
 
 export function rowToPage(row: Record<string, unknown>): StoredPage {
     return {
+        id: String(row.id),
         slug: String(row.slug),
         tenant: String(row.tenant ?? ''),
         type: row.type as StoredPage['type'],
@@ -138,36 +217,6 @@ export function rowToCategory(row: Record<string, unknown>): StoredCategory {
     };
 }
 
-export const PAGE_PATCHABLE: Record<string, string> = {
-    type: 'type',
-    status: 'status',
-    title: 'title',
-    titleMlt: 'title_mlt',
-    annotation: 'annotation',
-    data: 'data',
-    category: 'category',
-    pinned: 'pinned',
-    authorSlug: 'author_slug',
-    coverImage: 'cover_image',
-    readingTime: 'reading_time',
-    publishedAt: 'published_at',
-    folderId: 'folder_id',
-    segment: 'segment',
-    seoTitle: 'seo_title',
-    seoDescription: 'seo_description',
-};
-
-export function patchToColumns(patch: Partial<StoredPage>): Array<[string, unknown]> {
-    const jsonCols = new Set(['title_mlt', 'annotation', 'data', 'seo_title', 'seo_description']);
-    const entries: Array<[string, unknown]> = [];
-    for (const [key, col] of Object.entries(PAGE_PATCHABLE)) {
-        if (!(key in patch)) continue;
-        const value = (patch as Record<string, unknown>)[key];
-        entries.push([col, jsonCols.has(col) && value !== null ? JSON.stringify(value) : value]);
-    }
-    return entries;
-}
-
 export function folderToRow(f: StoredFolder): Record<string, unknown> {
     return {
         id: f.id,
@@ -196,7 +245,7 @@ export function commentToRow(c: StoredComment): Record<string, unknown> {
     return {
         id: c.id,
         tenant: c.tenant ?? '',
-        page_slug: c.pageSlug,
+        page_id: c.pageId,
         user_id: c.userId,
         author_name: c.authorName,
         author_email: c.authorEmail,
@@ -214,7 +263,7 @@ export function rowToComment(row: Record<string, unknown>): StoredComment {
     return {
         id: String(row.id),
         tenant: String(row.tenant ?? ''),
-        pageSlug: String(row.page_slug),
+        pageId: String(row.page_id),
         userId: (row.user_id as string | null) ?? null,
         authorName: String(row.author_name),
         authorEmail: (row.author_email as string | null) ?? null,

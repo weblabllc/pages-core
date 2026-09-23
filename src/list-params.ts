@@ -1,6 +1,6 @@
 import { ContentModel, KindListing } from './content-model.js';
 import { CommentStatus, COMMENT_STATUSES } from './comments.js';
-import { PageOrder, PageSortField } from './store.js';
+import { CommentOrder, CommentSortField, PageOrder, PageSortField } from './store.js';
 import { PageStatus } from './types.js';
 
 export interface PageListFilter {
@@ -18,13 +18,6 @@ export interface ParsedPageList {
     page: number;
     pageSize: number;
     filter: PageListFilter;
-}
-
-export type CommentSortField = 'createdAt' | 'status' | 'rating' | 'id';
-
-export interface CommentOrder {
-    field: CommentSortField;
-    direction: 'asc' | 'desc';
 }
 
 export interface CommentListFilter {
