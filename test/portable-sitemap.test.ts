@@ -30,6 +30,7 @@ describe('validatePortablePage', () => {
         ['zone block without type', { ...good, data: { root: {}, content: [], zones: { z: [{ props: { id: 'a' } }] } } }, /zones.z\[0\].type/],
         ['unknown language', { ...good, data: { root: { props: { t: { en: 'a', xx: 'b' } } }, content: [] } }, /unexpected keys/],
         ['non-string translation', { ...good, titleMlt: { en: 5 } }, /must be a string/],
+        ['bad seo translation', { ...good, seoDescription: { en: 'x', xx: 'y' } }, /seoDescription: unexpected keys/],
     ];
     for (const [name, body, message] of cases) {
         it(`rejects ${name}`, () => {
@@ -44,9 +45,11 @@ describe('validatePortablePage', () => {
     it('round-trips an exported page', () => {
         const exported = exportPortablePage({
             slug: 'about', tenant: '', type: 'page', status: 'published', title: 'About', titleMlt: null, annotation: null,
-            data: good.data, category: null, pinned: false, authorSlug: null, coverImage: null, readingTime: 1, publishedAt: new Date(),
+            data: good.data, category: null, pinned: false, authorSlug: null, coverImage: null, readingTime: 1, publishedAt: new Date(), seoTitle: { en: 'About — Shop' },
         });
-        expect(validatePortablePage(JSON.parse(JSON.stringify(exported)), { slug: 'about', type: 'page', langs }).title).toBe('About');
+        const imported = validatePortablePage(JSON.parse(JSON.stringify(exported)), { slug: 'about', type: 'page', langs });
+        expect(imported.title).toBe('About');
+        expect(imported.seoTitle).toEqual({ en: 'About — Shop' });
     });
 
     it('reports the path of a bad translation', () => {

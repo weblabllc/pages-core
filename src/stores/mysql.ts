@@ -103,6 +103,15 @@ export class MysqlPageStore implements PageStore {
                 PRIMARY KEY (tenant, kind, slug)
             )`);
         }
+        if (pages) {
+            const existing = await this.rows(
+                `SELECT column_name AS c FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ?`,
+                [this.t.pages],
+            );
+            const have = new Set(existing.map(r => String(r.c ?? r.COLUMN_NAME).toLowerCase()));
+            if (!have.has('seo_title')) await this.exec(`ALTER TABLE ${this.t.pages} ADD COLUMN seo_title json NULL`);
+            if (!have.has('seo_description')) await this.exec(`ALTER TABLE ${this.t.pages} ADD COLUMN seo_description json NULL`);
+        }
         if (roles) {
             const existing = await this.rows(
                 `SELECT column_name AS c FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ?`,
@@ -322,19 +331,13 @@ export class MysqlPageStore implements PageStore {
         );
     }
 
-    async assignRole(slug: string, role: string | null, tenant = ''): Promise<{ released: string | null }> {
-        let released: string | null = null;
-        if (role) {
-            const holders = await this.rows(`SELECT slug FROM ${this.t.pages} WHERE tenant = ? AND role = ? AND slug <> ?`, [
-                tenant,
-                role,
-                slug,
-            ]);
-            released = holders[0] ? String(holders[0].slug) : null;
-            await this.exec(`UPDATE ${this.t.pages} SET role = NULL WHERE tenant = ? AND role = ? AND slug <> ?`, [tenant, role, slug]);
-        }
+    async findPageByRole(role: string, tenant = ''): Promise<StoredPage | null> {
+        const rows = await this.rows(`SELECT * FROM ${this.t.pages} WHERE tenant = ? AND role = ?`, [tenant, role]);
+        return rows[0] ? rowToPage(rows[0]) : null;
+    }
+
+    async setRole(slug: string, role: string | null, tenant = ''): Promise<void> {
         await this.exec(`UPDATE ${this.t.pages} SET role = ? WHERE tenant = ? AND slug = ?`, [role, tenant, slug]);
-        return { released };
     }
 
     async listPagesWithRole(tenant = ''): Promise<StoredPage[]> {

@@ -47,7 +47,16 @@ export class PageRoles {
         this.model.assertRole(role);
         const page = await this.store.getPage(slug, this.tenant);
         if (!page) throw new ContentError('not_found', `Page "${slug}" not found`, { slug });
-        return this.store.assignRole(slug, role, this.tenant);
+        let released: string | null = null;
+        if (role) {
+            const holder = await this.store.findPageByRole(role, this.tenant);
+            if (holder && holder.slug !== slug) {
+                await this.store.setRole(holder.slug, null, this.tenant);
+                released = holder.slug;
+            }
+        }
+        await this.store.setRole(slug, role, this.tenant);
+        return { released };
     }
 
     async links(options: RoleLinkOptions = {}): Promise<Record<string, RoleLink>> {

@@ -1,6 +1,6 @@
 {
   "name": "@weblabllc/pages-core",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "description": "Transport- and ORM-agnostic core for Puck-backed content: configurable kinds (page/article/blog), publish lifecycle, MLT, authors, folders with computed slugs and redirects, portable export/import, sitemaps, optional Postgres/MySQL/MongoDB stores",
   "keywords": [

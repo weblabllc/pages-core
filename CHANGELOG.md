@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.0 — 2026-09-24
+
+- SEO: every page has `seoTitle` and `seoDescription` (multi-language). `ensureSchema` adds the columns to existing tables; export and import carry them and validate their translations.
+- Page roles: the rule "a role belongs to one page, assigning it elsewhere releases the old holder" lives only in `PageRoles.assign`. **Breaking for custom stores:** `PageStore.assignRole` is replaced by the plain `findPageByRole(role)` and `setRole(slug, role)`.
+
 ## 0.4.0 — 2026-09-23
 
 - Page roles: `ContentModel({ roles })`, `DEFAULT_PAGE_ROLES` (`offer`, `privacy`, `returns`), `PageRoles.assign()` moves a role to its new page, `PageRoles.links()` and `roleLinks()` build links for published holders.

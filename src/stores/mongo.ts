@@ -266,17 +266,13 @@ export class MongoPageStore implements PageStore {
         );
     }
 
-    async assignRole(slug: string, role: string | null, tenant = ''): Promise<{ released: string | null }> {
-        let released: string | null = null;
-        if (role) {
-            const holder = await this.pages().findOne({ tenant, role, slug: { $ne: slug } });
-            if (holder) {
-                released = String(holder.slug);
-                await this.pages().updateOne({ tenant, slug: released }, { $set: { role: null, updatedAt: new Date() } });
-            }
-        }
+    async findPageByRole(role: string, tenant = ''): Promise<StoredPage | null> {
+        const doc = await this.pages().findOne({ tenant, role });
+        return doc ? docToPage(doc) : null;
+    }
+
+    async setRole(slug: string, role: string | null, tenant = ''): Promise<void> {
         await this.pages().updateOne({ tenant, slug }, { $set: { role, updatedAt: new Date() } });
-        return { released };
     }
 
     async listPagesWithRole(tenant = ''): Promise<StoredPage[]> {

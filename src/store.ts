@@ -22,6 +22,8 @@ export interface StoredPage {
     folderId?: string | null;
     segment?: string | null;
     role?: string | null;
+    seoTitle?: MultiLangText | null;
+    seoDescription?: MultiLangText | null;
     createdAt?: Date;
     updatedAt?: Date;
 }
@@ -92,7 +94,8 @@ export interface PageStore {
     resolveFormerSlug(slug: string, tenant?: string): Promise<string | null>;
     releaseFormerSlug(slug: string, tenant?: string): Promise<void>;
 
-    assignRole(slug: string, role: string | null, tenant?: string): Promise<{ released: string | null }>;
+    findPageByRole(role: string, tenant?: string): Promise<StoredPage | null>;
+    setRole(slug: string, role: string | null, tenant?: string): Promise<void>;
     listPagesWithRole(tenant?: string): Promise<StoredPage[]>;
 }
 

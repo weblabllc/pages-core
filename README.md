@@ -58,6 +58,8 @@ await store.createPage({ slug: 'first', tenant: '', type: 'article', status: 'dr
 await store.listPages({ type: 'article', category: 'news', page: 1, pageSize: 25 })
 ```
 
+Every page carries `seoTitle` and `seoDescription` as multi-language text next to `titleMlt` and `annotation`.
+
 All three adapters share one `PageStore` port. To reuse your app's connections, pass your own pool or client via `client:`. Multi-tenancy works through the `tenant` column.
 
 `ensureSchema` is idempotent and only adds things. Turning a feature on later, for example `folders`, adds the missing columns and tables and keeps the existing rows. It never drops or rewrites anything.
@@ -136,6 +138,8 @@ The rules:
 - A role belongs to one page per tenant. Assigning it to another page takes it from the previous holder.
 - `links()` returns only published pages unless `publishedOnly: false`.
 - Pages without a role are not affected.
+
+All role rules live in `PageRoles`: stores only find a page by role and write a role, so every adapter behaves the same.
 
 
 

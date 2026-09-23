@@ -72,6 +72,8 @@ export class PgPageStore implements PageStore {
             await this.pool.query(
                 `CREATE INDEX IF NOT EXISTS ${this.t.pages}_list_idx ON ${this.t.pages} (tenant, type, status, published_at DESC)`,
             );
+            await this.pool.query(`ALTER TABLE ${this.t.pages} ADD COLUMN IF NOT EXISTS seo_title jsonb`);
+            await this.pool.query(`ALTER TABLE ${this.t.pages} ADD COLUMN IF NOT EXISTS seo_description jsonb`);
         }
         if (authors) {
             await this.pool.query(`CREATE TABLE IF NOT EXISTS ${this.t.authors} (
@@ -330,21 +332,17 @@ export class PgPageStore implements PageStore {
         );
     }
 
-    async assignRole(slug: string, role: string | null, tenant = ''): Promise<{ released: string | null }> {
-        let released: string | null = null;
-        if (role) {
-            const { rows } = await this.pool.query(
-                `UPDATE ${this.t.pages} SET role = NULL, updated_at = now() WHERE tenant = $1 AND role = $2 AND slug <> $3 RETURNING slug`,
-                [tenant, role, slug],
-            );
-            released = rows[0] ? String(rows[0].slug) : null;
-        }
+    async findPageByRole(role: string, tenant = ''): Promise<StoredPage | null> {
+        const { rows } = await this.pool.query(`SELECT * FROM ${this.t.pages} WHERE tenant = $1 AND role = $2`, [tenant, role]);
+        return rows[0] ? rowToPage(rows[0]) : null;
+    }
+
+    async setRole(slug: string, role: string | null, tenant = ''): Promise<void> {
         await this.pool.query(`UPDATE ${this.t.pages} SET role = $3, updated_at = now() WHERE tenant = $1 AND slug = $2`, [
             tenant,
             slug,
             role,
         ]);
-        return { released };
     }
 
     async listPagesWithRole(tenant = ''): Promise<StoredPage[]> {

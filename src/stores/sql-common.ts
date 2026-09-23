@@ -25,6 +25,8 @@ export function pageToRow(r: StoredPage): Record<string, unknown> {
     if (r.folderId !== undefined) placement.folder_id = r.folderId;
     if (r.segment !== undefined) placement.segment = r.segment;
     if (r.role !== undefined) placement.role = r.role;
+    if (r.seoTitle !== undefined) placement.seo_title = r.seoTitle === null ? null : JSON.stringify(r.seoTitle);
+    if (r.seoDescription !== undefined) placement.seo_description = r.seoDescription === null ? null : JSON.stringify(r.seoDescription);
     return {
         ...placement,
         slug: r.slug,
@@ -80,6 +82,8 @@ export function rowToPage(row: Record<string, unknown>): StoredPage {
         ...('folder_id' in row ? { folderId: (row.folder_id as string | null) ?? null } : {}),
         ...('segment' in row ? { segment: (row.segment as string | null) ?? null } : {}),
         ...('role' in row ? { role: (row.role as string | null) ?? null } : {}),
+        ...('seo_title' in row ? { seoTitle: parseJson(row.seo_title) as StoredPage['seoTitle'] } : {}),
+        ...('seo_description' in row ? { seoDescription: parseJson(row.seo_description) as StoredPage['seoDescription'] } : {}),
         createdAt: asDate(row.created_at) ?? undefined,
         updatedAt: asDate(row.updated_at) ?? undefined,
     };
@@ -144,10 +148,12 @@ export const PAGE_PATCHABLE: Record<string, string> = {
     publishedAt: 'published_at',
     folderId: 'folder_id',
     segment: 'segment',
+    seoTitle: 'seo_title',
+    seoDescription: 'seo_description',
 };
 
 export function patchToColumns(patch: Partial<StoredPage>): Array<[string, unknown]> {
-    const jsonCols = new Set(['title_mlt', 'annotation', 'data']);
+    const jsonCols = new Set(['title_mlt', 'annotation', 'data', 'seo_title', 'seo_description']);
     const entries: Array<[string, unknown]> = [];
     for (const [key, col] of Object.entries(PAGE_PATCHABLE)) {
         if (!(key in patch)) continue;

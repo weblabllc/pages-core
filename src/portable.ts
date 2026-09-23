@@ -14,6 +14,8 @@ export interface PortablePage {
     authorSlug: string | null;
     readingTime: number | null;
     coverImage: string | null;
+    seoTitle: MultiLangText | null;
+    seoDescription: MultiLangText | null;
 }
 
 export function exportPortablePage(page: StoredPage): PortablePage {
@@ -28,6 +30,8 @@ export function exportPortablePage(page: StoredPage): PortablePage {
         authorSlug: page.authorSlug,
         readingTime: page.readingTime,
         coverImage: page.coverImage,
+        seoTitle: page.seoTitle ?? null,
+        seoDescription: page.seoDescription ?? null,
     };
 }
 
@@ -111,7 +115,7 @@ export function validatePortablePage(body: unknown, expected: ImportExpectation)
     }
     const mltError = findMltError(data, expected.langs);
     if (mltError) fail(mltError);
-    for (const field of ['titleMlt', 'annotation'] as const) {
+    for (const field of ['titleMlt', 'annotation', 'seoTitle', 'seoDescription'] as const) {
         const value = input[field];
         if (value === undefined || value === null) continue;
         if (!isObject(value)) fail(`${field} must be an object`);

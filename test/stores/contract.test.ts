@@ -68,6 +68,16 @@ for (const [name, options] of targets) {
             expect(await store.updatePage('missing', { title: 'x' })).toBeNull();
         });
 
+        it('stores seo title and description in every language', async () => {
+            await store.createPage(page('seo-page', { seoTitle: { en: 'About us — Shop', ua: 'Про нас — Магазин' }, seoDescription: null }));
+            const created = await store.getPage('seo-page');
+            expect(created?.seoTitle).toEqual({ en: 'About us — Shop', ua: 'Про нас — Магазин' });
+            expect(created?.seoDescription ?? null).toBeNull();
+            const updated = await store.updatePage('seo-page', { seoDescription: { en: 'Who we are', ua: 'Хто ми' } });
+            expect(updated?.seoDescription).toEqual({ en: 'Who we are', ua: 'Хто ми' });
+            expect(updated?.seoTitle).toEqual({ en: 'About us — Shop', ua: 'Про нас — Магазин' });
+        });
+
         it('lists with filters, search and pagination', async () => {
             for (let i = 0; i < 5; i++) {
                 await store.createPage(page(`post-${i}`, { type: 'blog', category: i % 2 ? 'news' : 'tips', title: `Post ${i}` }));
@@ -137,7 +147,7 @@ for (const [name, options] of targets) {
             });
 
             it('refuses two holders of one role at the storage level', async () => {
-                await store.assignRole('plain-1', 'returns');
+                await store.setRole('plain-1', 'returns');
                 await expect(store.createPage(page('dup-returns', { role: 'returns' }))).rejects.toThrow();
             });
         });
